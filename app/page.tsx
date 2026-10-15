@@ -1,69 +1,12 @@
-import Image from "next/image";
-
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+import Link from 'next/link';
+import {currentMember} from '@/lib/auth';
+import {isConfigured} from '@/lib/config';
+import {Workspace} from '@/components/workspace';
+export const dynamic='force-dynamic';
+export default async function Home(){
+ if(!isConfigured())return <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6"><div className="panel p-9 shadow-sm"><div className="mb-5 text-4xl">✳</div><h1 className="mb-3 text-2xl font-bold">MacGPT 설정이 필요합니다</h1><p className="muted leading-7">프로젝트 코드가 준비되었습니다. Supabase 프로젝트 생성, SQL 마이그레이션, Google Provider 및 환경변수 등록 후 시작할 수 있습니다.</p><p className="mt-4 rounded-lg bg-slate-100 p-3 text-sm">설정 안내: <code>docs/SETUP.md</code></p></div></main>;
+ const identity=await currentMember();
+ if(!identity)return <main className="grid min-h-screen place-items-center p-6"><div className="panel w-full max-w-md p-10 text-center shadow-sm"><div className="mb-4 text-4xl text-sky-700">✳</div><h1 className="mb-2 text-3xl font-semibold">MacGPT</h1><p className="muted mb-7 text-sm">청맥병원 AI 지식 파트너</p><Link href="/login" className="btn btn-primary w-full">Google 계정으로 로그인</Link></div></main>;
+ if(!identity.member.approved||!identity.member.active)return <main className="grid min-h-screen place-items-center p-6"><div className="panel max-w-lg p-10 text-center"><div className="mb-5 text-4xl">🔒</div><h1 className="text-xl font-bold">{identity.member.active?'관리자 승인 대기':'접근이 중단된 계정'}</h1><p className="muted mt-4 text-sm">{identity.member.email} 계정은 아직 원내 지식에 접근할 수 없습니다. 최종관리자에게 승인을 요청하세요.</p><form method="post" action="/logout" className="mt-6"><button className="btn btn-secondary">로그아웃</button></form></div></main>;
+ return <Workspace member={identity.member}/>;
 }
