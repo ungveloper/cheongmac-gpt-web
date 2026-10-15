@@ -10,7 +10,12 @@ export async function POST(req:Request){
  const member=await requireMember('admin');if(!member)return Response.json({error:'FORBIDDEN'},{status:403});
  const payload=schema.safeParse(await req.json().catch(()=>null));if(!payload.success)return Response.json({error:'BAD_REQUEST'},{status:400});
  try {
-  const matches=await searchKnowledge(payload.data.message,'restricted',10);
+  let matches;
+  try{matches=await searchKnowledge(payload.data.message,'restricted',10);}
+  catch(e){
+   console.error('admin assist search failure',e);
+   return Response.json({error:'KNOWLEDGE_SEARCH_FAILED',message:'지식 검색에 실패했습니다. Supabase 검색 함수와 SQL 권한을 확인해 주세요.'},{status:503});
+  }
   const candidates=matches.map(m=>({id:m.id,title:m.title,body:m.body.slice(0,2500),visibility:m.visibility,version:m.current_version}));
   const response=await ai().responses.create({
    model:models().admin,
@@ -34,7 +39,18 @@ export async function POST(req:Request){
   }
   if(parsed.data.changes.length===0)return Response.json({kind:'question',summary:parsed.data.summary});
   const {data,error}=await adminDb().from('knowledge_proposals').insert({request_text:payload.data.message,summary:parsed.data.summary,changes:parsed.data.changes,requested_by:member.member.id}).select('id,changes,summary,status').single();
-  if(error)throw error;
+  if(error){console.error('admin assist DB save failure',error);return Response.json({error:'PROPOSAL_SAVE_FAILED',message:'변경안 저장에 실패했습니다. DB 권한과 테이블을 확인해 주세요.'},{status:503});}
   return Response.json({kind:'proposal',proposal:data},{headers:{'Cache-Control':'no-store'}});
- }catch(e){console.error('assist error',e);return Response.json({error:'AI_UNAVAILABLE',message:'변경안 분석에 실패했습니다.'},{status:503});}
+ }catch(e){
+  const problem=e as {status?:number;code?:string;error?:{code?:string};request_id?:string};
+  const code=problem?.code||problem?.error?.code||'';
+  const status=problem?.status;
+  console.error('admin assist AI failure',{status,code,request_id:problem?.request_id});
+  if(status===401)return Response.json({error:'OPENAI_AUTH_FAILED',message:'OpenAI API 키 인증에 실패했습니다. .env.local의 OPENAI_API_KEY를 확인해 주세요.'},{status:503});
+  if(status===429&&code==='insufficient_quota')return Response.json({error:'OPENAI_QUOTA',message:'OpenAI API 잔액 또는 사용 한도가 부족합니다. API 플랫폼의 Billing과 Limits를 확인해 주세요.'},{status:503});
+  if(status===429)return Response.json({error:'OPENAI_RATE_LIMIT',message:'OpenAI API 요청 제한에 도달했습니다. 잠시 후 다시 시도해 주세요.'},{status:503});
+  if(status===404||code==='model_not_found')return Response.json({error:'OPENAI_MODEL_UNAVAILABLE',message:'관리자 AI 모델에 접근할 수 없습니다. OPENAI_ADMIN_MODEL 설정을 확인해 주세요.'},{status:503});
+  if(status===403)return Response.json({error:'OPENAI_PERMISSION_DENIED',message:'OpenAI 프로젝트의 모델 접근 권한을 확인해 주세요.'},{status:503});
+  return Response.json({error:'AI_UNAVAILABLE',message:'변경안 분석에 실패했습니다. 개발 서버 터미널에서 admin assist AI failure 로그를 확인해 주세요.'},{status:503});
+ }
 }

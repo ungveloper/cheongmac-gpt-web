@@ -2,8 +2,11 @@
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {BookOpen,Bot,Check,ChevronDown,Code2,Download,FilePlus,KeyRound,LogOut,Menu,MessageCircle,Plus,Send,Shield,Users,X} from 'lucide-react';
 import {browserDb} from '@/lib/supabase-browser';
+import {isKnowledgeChangeRequest} from '@/lib/knowledge-intent.mjs';
 import type {Member} from '@/lib/auth';
-type ChatMessage={role:'user'|'assistant';content:string;sources?:Source[]};
+type ChatMessage={role:'user'|'assistant';content:string;sources?:Source[];failed?:boolean};
+type ChatPhase='idle'|'analyzing'|'searching'|'writing';
+const phaseLabel:Record<Exclude<ChatPhase,'idle'>,string>={analyzing:'지식 변경안을 분석하는 중...',searching:'승인된 지식을 검색하는 중...',writing:'답변을 작성하는 중...'};
 type Source={id:string;title:string;version:number;updated_at:string;index:number};
 type Change={operation:'create'|'update'|'archive';item_id:string|null;expected_version:number|null;title:string;visibility:'public'|'internal'|'restricted';body:string};
 type Proposal={id:string;summary:string;changes:Change[];status:string;created_at?:string};
@@ -17,7 +20,7 @@ export function Workspace({member}:{member:Member}){
  const isAdmin=member.role!=='staff',isSuper=member.role==='super_admin';
  const [tab,setTab]=useState('chat'),[menu,setMenu]=useState(false),[chat,setChat]=useState<ChatMessage[]>([]),[draft,setDraft]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[suggestion,setSuggestion]=useState<Proposal|null>(null);
  const [knowledge,setKnowledge]=useState<Knowledge[]>([]),[proposals,setProposals]=useState<Proposal[]>([]),[members,setMembers]=useState<Member[]>([]),[apps,setApps]=useState<ApiClient[]>([]),[files,setFiles]=useState<StoredFile[]>([]),[name,setName]=useState(''),[scope,setScope]=useState('public'),[issuedKey,setIssuedKey]=useState(''),[filter,setFilter]=useState('');
- const [uploading,setUploading]=useState(false);const endRef=useRef<HTMLDivElement>(null);
+ const [uploading,setUploading]=useState(false),[phase,setPhase]=useState<ChatPhase>('idle'),[forceEdit,setForceEdit]=useState(false);const endRef=useRef<HTMLDivElement>(null);
  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'});},[chat,suggestion]);
  async function refresh(next=tab){try{
   if(next==='knowledge'){const r=await json('/api/v1/knowledge?limit=50');setKnowledge(r.data||[]);}
@@ -27,25 +30,68 @@ export function Workspace({member}:{member:Member}){
   if(next==='files'){const r=await json('/api/admin/files');setFiles(r.data||[]);}
  }catch(e){setNotice(e instanceof Error?e.message:'목록 조회 실패');}}
  function move(next:string){setTab(next);setMenu(false);setNotice('');void refresh(next);}
- async function stream(text:string,history:ChatMessage[]){
-  const res=await fetch('/api/v1/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,history:history.slice(-8).map(m=>({role:m.role,content:m.content.slice(0,2000)}))})});
-  if(!res.ok)throw new Error(`질문 처리 오류 (${res.status})`);
-  if(!res.body)throw new Error('스트리밍을 시작하지 못했습니다.');
-  setChat(v=>[...v,{role:'assistant',content:''}]);
-  const reader=res.body.getReader(),decoder=new TextDecoder();let buffer='',answerText='',sourceList:Source[]=[];
-  while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true}).replace(/\r\n/g,'\n');
-   let pos:number;while((pos=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,pos);buffer=buffer.slice(pos+2);const event=frame.split('\n').find(x=>x.startsWith('event: '))?.slice(7);const raw=frame.split('\n').find(x=>x.startsWith('data: '))?.slice(6);if(!raw)continue;
-    const d=JSON.parse(raw);if(event==='delta'){answerText+=d.text||'';setChat(v=>{const copy=[...v];copy[copy.length-1]={role:'assistant',content:answerText,sources:sourceList};return copy;});}
-    if(event==='sources'){sourceList=d.sources||[];}
-    if(event==='error'){throw new Error(d.message||'AI 답변 오류');}
-   }
-  }
-  setChat(v=>{const copy=[...v];copy[copy.length-1]={role:'assistant',content:answerText||'관련 지식을 찾지 못했습니다.',sources:sourceList};return copy;});
+ function updateAssistant(patch:Partial<ChatMessage>){
+  setChat(items=>{
+   const copy=[...items];const last=copy[copy.length-1];
+   if(last?.role==='assistant')copy[copy.length-1]={...last,...patch};
+   return copy;
+  });
  }
- async function send(){const text=draft.trim();if(!text||busy)return;setBusy(true);setDraft('');setNotice('');setSuggestion(null);const history=[...chat];setChat(v=>[...v,{role:'user',content:text}]);
-  try{if(isAdmin){const outcome=await post('/api/admin/assist',{message:text});if(outcome.kind==='proposal'){setSuggestion(outcome.proposal);setChat(v=>[...v,{role:'assistant',content:`변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 변경 내용을 확인하고 승인하거나 거절할 수 있습니다.`}]);return;}}
+ async function stream(text:string,history:ChatMessage[]){
+  setPhase('searching');
+  const res=await fetch('/api/v1/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,history:history.filter(m=>!m.failed).slice(-8).map(m=>({role:m.role,content:m.content.slice(0,2000)}))})});
+  if(!res.ok){
+   const problem=await res.json().catch(()=>null);
+   const code=problem?.error?.code;
+   const descriptions:Record<string,string>={NOT_CONFIGURED:'OpenAI 또는 Supabase 환경변수를 확인해 주세요.',SEARCH_UNAVAILABLE:'지식 검색 서버에 접근할 수 없습니다. 터미널의 오류 로그와 DB 권한을 확인해 주세요.',RATE_LIMITED:'요청 횟수가 많습니다. 잠시 후 다시 시도해 주세요.',UNAUTHORIZED:'로그인 또는 계정 승인 상태를 확인해 주세요.'};
+   throw new Error(descriptions[code]||problem?.error?.message||`질문 처리 오류 (HTTP ${res.status})`);
+  }
+  if(!res.body)throw new Error('스트리밍을 시작하지 못했습니다.');
+  const reader=res.body.getReader(),decoder=new TextDecoder();let buffer='',answerText='',sourceList:Source[]=[],finished=false;
+  try{
+   while(true){
+    const {done,value}=await reader.read();if(done)break;
+    buffer+=decoder.decode(value,{stream:true}).replace(/\r\n/g,'\n');
+    let pos:number;
+    while((pos=buffer.indexOf('\n\n'))>=0){
+     const frame=buffer.slice(0,pos);buffer=buffer.slice(pos+2);
+     const event=frame.split('\n').find(x=>x.startsWith('event: '))?.slice(7);
+     const raw=frame.split('\n').find(x=>x.startsWith('data: '))?.slice(6);if(!raw)continue;
+     const data=JSON.parse(raw);
+     if(event==='sources'){sourceList=data.sources||[];setPhase('writing');updateAssistant({sources:sourceList});}
+     if(event==='delta'){
+      setPhase('writing');answerText+=data.text||'';updateAssistant({content:answerText,sources:sourceList});
+     }
+     if(event==='error')throw new Error(data.message||'AI 답변 생성에 실패했습니다. 서버 로그를 확인해 주세요.');
+     if(event==='done')finished=true;
+    }
+   }
+   if(!finished)throw new Error('답변 스트리밍이 완료되지 않았습니다. 다시 시도해 주세요.');
+   if(!answerText.trim())throw new Error('AI가 답변을 생성하지 못했습니다. OpenAI 설정과 터미널 로그를 확인해 주세요.');
+   updateAssistant({content:answerText,sources:sourceList});
+  }finally{reader.releaseLock();}
+ }
+ async function send(){
+  const text=draft.trim();if(!text||busy)return;
+  const analyze=isAdmin&&(forceEdit||isKnowledgeChangeRequest(text));
+  setBusy(true);setPhase(analyze?'analyzing':'searching');setDraft('');setNotice('');setSuggestion(null);setForceEdit(false);
+  const history=chat.filter((m,i)=>!m.failed&&!(m.role==='user'&&chat[i+1]?.failed));
+  setChat(items=>[...items,{role:'user' as const,content:text},{role:'assistant' as const,content:''}]);
+  try{
+   if(analyze){
+    const outcome=await post('/api/admin/assist',{message:text});
+    if(outcome.kind==='proposal'){
+     setSuggestion(outcome.proposal);
+     updateAssistant({content:`변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 변경 내용을 확인하고 승인하거나 거절할 수 있습니다.`});
+     return;
+    }
+   }
    await stream(text,history);
-  }catch(e){setNotice(e instanceof Error?e.message:'답변 실패');}finally{setBusy(false);}
+  }catch(e){
+   const detail=e instanceof Error?e.message:'요청 처리 중 오류가 발생했습니다.';
+   updateAssistant({content:`요청을 완료하지 못했습니다. ${detail}`,failed:true});
+   setNotice(detail);
+  }finally{setBusy(false);setPhase('idle');}
  }
  async function decide(p:Proposal,action:'approve'|'reject'){setBusy(true);try{const r=await post('/api/admin/proposals/approve',{id:p.id,action});setSuggestion(null);setNotice(action==='approve'?`승인 완료 (${r.changes?.length||0}건)${r.warning?' · '+r.warning:''}`:'변경안을 거절했습니다.');if(tab==='proposals')await refresh('proposals');}catch(e){setNotice(e instanceof Error?e.message:'승인 처리 실패');}finally{setBusy(false);}}
  async function changeMember(m:Member,patch:Record<string,unknown>){try{await post('/api/admin/members',{id:m.id,...patch},'PATCH');await refresh('members');}catch(e){setNotice(e instanceof Error?e.message:'권한 변경 실패');}}
@@ -56,7 +102,7 @@ export function Workspace({member}:{member:Member}){
   {menu&&<button aria-label="메뉴 닫기" onClick={()=>setMenu(false)} className="fixed inset-0 z-20 bg-slate-900/30 md:hidden"/>}
   <aside className={`fixed inset-y-0 left-0 z-30 flex w-[260px] flex-col border-r border-slate-200 bg-white p-5 shadow-sm transition-transform md:sticky md:top-0 md:h-screen md:translate-x-0 ${menu?'translate-x-0':'-translate-x-full'}`}>
    <div className="mb-10 flex items-center justify-between"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-sky-700 text-xl text-white">✳</div><div><div className="font-bold tracking-tight">MacGPT</div><div className="muted text-[11px]">청맥병원 AI Workspace</div></div></div><button onClick={()=>setMenu(false)} className="md:hidden"><X size={18}/></button></div>
-   <button className="btn btn-primary mb-5 w-full" onClick={()=>{setChat([]);setSuggestion(null);move('chat');}}><Plus size={15}/> 새 대화</button>
+   <button className="btn btn-primary mb-5 w-full" disabled={busy} onClick={()=>{setChat([]);setSuggestion(null);setForceEdit(false);move('chat');}}><Plus size={15}/> 새 대화</button>
    <p className="muted mb-2 px-3 text-[11px] font-semibold uppercase tracking-widest">Workspace</p>
    <nav className="space-y-1">{navigation.map(n=>{const Icon=n.icon;return <button key={n.id} onClick={()=>move(n.id)} className={`nav-tab text-sm ${tab===n.id?'active font-semibold':''}`}><Icon size={17}/>{titles[n.id]}</button>;})}</nav>
    <div className="mt-auto border-t border-slate-100 pt-5"><div className="flex items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-100 font-bold text-sky-700">{(member.display_name||member.email).slice(0,1).toUpperCase()}</div><div className="min-w-0"><div className="truncate text-sm font-semibold">{member.display_name||member.email}</div><div className="muted text-xs">{member.role==='super_admin'?'최종관리자':member.role==='admin'?'관리자':'일반 직원'}</div></div></div><form action="/logout" method="post" className="mt-4"><button className="nav-tab text-sm"><LogOut size={16}/> 로그아웃</button></form></div>
@@ -65,9 +111,9 @@ export function Workspace({member}:{member:Member}){
    {notice&&<div className="mx-5 mt-5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:mx-10"><span className="text-flow">{notice}</span><button onClick={()=>setNotice('')}><X size={16}/></button></div>}
    {tab==='chat'&&<div className="mx-auto flex h-[calc(100dvh-72px)] w-full max-w-4xl flex-col px-4 sm:px-8"><div className="scroll-hide flex-1 space-y-6 overflow-y-auto py-8">
     {chat.length===0&&<div className="flex min-h-[55vh] flex-col items-center justify-center text-center"><div className="mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-sky-100 text-sky-700"><Bot size={30}/></div><h1 className="mb-3 text-3xl font-semibold tracking-tight">무엇을 도와드릴까요?</h1><p className="muted max-w-md leading-7">승인된 병원 업무 규정과 매뉴얼을 기반으로 답변합니다.{isAdmin?' 관리자는 대화로 지식 수정안을 만들고 승인할 수 있습니다.':''}</p><div className="mt-8 grid w-full max-w-xl gap-2 sm:grid-cols-2">{['현재 등록된 지식은 무엇인가요?','원내 규정 관련 도움을 받고 싶어요',...(isAdmin?['새로운 지식을 등록하고 싶어요','기존 지식을 수정해 줘']:[])].map(x=><button onClick={()=>setDraft(x)} className="rounded-xl border border-slate-200 bg-white p-4 text-left text-sm hover:border-sky-400" key={x}>{x}</button>)}</div></div>}
-    {chat.map((m,i)=><div key={i} className={`flex ${m.role==='user'?'justify-end':'justify-start'}`}><div className={`max-w-[95%] ${m.role==='user'?'bubble-user sm:max-w-[75%]':'bubble-ai w-full'}`}><div className="text-flow text-sm leading-7">{m.content||'답변 작성 중...'}</div>{m.sources&&m.sources.length>0&&<details className="mt-4 border-t border-slate-100 pt-3"><summary className="muted cursor-pointer text-xs">근거 지식 보기 ({m.sources.length})</summary><div className="mt-2 space-y-1">{m.sources.map(s=><div className="text-xs" key={s.id}>[{s.index}] {s.title} · v{s.version} · {new Date(s.updated_at).toLocaleDateString('ko-KR')}</div>)}</div></details>}</div></div>)}
+    {chat.map((m,i)=><div key={i} className={`flex ${m.role==='user'?'justify-end':'justify-start'}`}><div className={`max-w-[95%] ${m.role==='user'?'bubble-user sm:max-w-[75%]':'bubble-ai w-full'}`}><div className="text-flow text-sm leading-7">{m.content || (busy&&phase!=='idle'?<span role="status" aria-live="polite" className="inline-flex items-center gap-2 text-slate-500"><span className="chat-spinner" aria-hidden="true"/>{phaseLabel[phase]}</span>:'답변을 준비하고 있습니다.')}{busy&&i===chat.length-1&&m.role==='assistant'&&m.content&&!m.failed&&<span className="chat-cursor" aria-hidden="true">▍</span>}</div>{m.failed&&<button type="button" className="btn btn-secondary mt-3" disabled={busy} onClick={()=>setDraft(chat[i-1]?.role==='user'?(chat[i-1]?.content||''):'')}>질문 다시 입력</button>}{m.sources&&m.sources.length>0&&<details className="mt-4 border-t border-slate-100 pt-3"><summary className="muted cursor-pointer text-xs">근거 지식 보기 ({m.sources.length})</summary><div className="mt-2 space-y-1">{m.sources.map(s=><div className="text-xs" key={s.id}>[{s.index}] {s.title} · v{s.version} · {new Date(s.updated_at).toLocaleDateString('ko-KR')}</div>)}</div></details>}</div></div>)}
     {suggestion&&<div className="panel space-y-4 p-5"><div className="flex items-center gap-2 font-semibold"><Check size={18} className="text-sky-700"/> 승인 대기 변경안</div><p className="text-sm">{suggestion.summary}</p>{suggestion.changes.map((c,i)=><div className="rounded-lg border border-slate-200 p-4" key={i}><div className="mb-2 flex flex-wrap items-center gap-2"><span className="badge">{c.operation==='create'?'신규':c.operation==='update'?'수정':'폐기'}</span><strong className="text-sm">{c.title}</strong><span className="muted text-xs">{c.visibility}</span></div><div className="text-flow max-h-36 overflow-y-auto text-xs leading-6">{c.body}</div></div>)}<div className="flex justify-end gap-2"><button className="btn btn-secondary" disabled={busy} onClick={()=>void decide(suggestion,'reject')}>거절</button><button className="btn btn-primary" disabled={busy} onClick={()=>void decide(suggestion,'approve')}>변경 승인</button></div></div>}
-    <div ref={endRef}/></div><div className="pb-6 pt-3"><form onSubmit={e=>{e.preventDefault();void send();}} className="panel flex items-end gap-3 p-3 shadow-sm"><textarea className="max-h-40 min-h-12 flex-1 resize-none rounded-lg border-0 p-3 text-sm leading-6" placeholder={isAdmin?'질문 또는 새로운 지식 등록·수정을 요청해 보세요':'업무 관련 질문을 입력하세요'} rows={2} value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}}}/><button type="submit" disabled={busy||!draft.trim()} className="btn btn-primary mb-1"><Send size={17}/></button></form><p className="muted mt-3 text-center text-[11px]">의학적 판단은 의료진과 확인하세요. 주민등록번호 등 민감정보는 입력하지 마세요. · 대화 기록은 이 탭에만 보관됩니다.</p></div></div>}
+    <div ref={endRef}/></div><div className="pb-6 pt-3">{busy&&phase!=='idle'&&<div role="status" aria-live="polite" className="muted mb-2 flex items-center gap-2 px-2 text-xs"><span className="chat-spinner" aria-hidden="true"/>{phaseLabel[phase]}</div>}<form onSubmit={e=>{e.preventDefault();void send();}} className="panel flex items-end gap-3 p-3 shadow-sm"><textarea className="max-h-40 min-h-12 flex-1 resize-none rounded-lg border-0 p-3 text-sm leading-6" disabled={busy} placeholder={isAdmin?'질문 또는 새로운 지식 등록·수정을 요청해 보세요':'업무 관련 질문을 입력하세요'} rows={2} value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}}}/><button type="submit" disabled={busy||!draft.trim()} aria-label="메시지 보내기" className="btn btn-primary mb-1">{busy?<span className="chat-spinner chat-spinner-light" aria-hidden="true"/>:<Send size={17}/>}</button></form>{isAdmin&&<div className="mt-2 flex justify-start px-1"><button type="button" aria-pressed={forceEdit} disabled={busy} onClick={()=>setForceEdit(v=>!v)} className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${forceEdit?'bg-sky-100 font-semibold text-sky-800':'muted hover:bg-white'}`}>{forceEdit?'✓ 지식 변경 모드 켜짐':'지식 변경 모드 (필요 시 선택)'}</button></div>}<p className="muted mt-3 text-center text-[11px]">의학적 판단은 의료진과 확인하세요. 주민등록번호 등 민감정보는 입력하지 마세요. · 대화 기록은 이 탭에만 보관됩니다.</p></div></div>}
    {tab!=='chat'&&<main className="mx-auto w-full max-w-5xl flex-1 space-y-6 px-5 py-8 md:px-10">
     {tab==='knowledge'&&<><div className="flex items-center justify-between"><div><h2 className="text-2xl font-bold">등록된 지식</h2><p className="muted mt-1 text-sm">게시 중인 최신 지식 목록입니다.</p></div><button className="btn btn-secondary" onClick={()=>void refresh('knowledge')}>새로고침</button></div><input className="input" value={filter} onChange={e=>setFilter(e.target.value)} placeholder="제목 또는 본문 검색"/><div className="space-y-3">{knowledge.filter(k=>(k.title+k.body).includes(filter)).map(k=><details key={k.id} className="panel p-5"><summary className="flex cursor-pointer flex-wrap items-center justify-between gap-3"><strong>{k.title}</strong><span className="flex items-center gap-2 text-xs"><span className="badge">{k.visibility}</span><span className="muted">v{k.current_version}</span><ChevronDown size={14}/></span></summary><p className="text-flow mt-4 whitespace-pre-wrap text-sm leading-7">{k.body}</p><p className="muted mt-4 text-xs">ID: {k.id} · {new Date(k.updated_at).toLocaleDateString('ko-KR')}</p></details>)}{!knowledge.length&&<Empty>등록된 지식이 없습니다. 관리자가 채팅으로 첫 지식을 등록해 보세요.</Empty>}</div></>}
     {tab==='proposals'&&<><Heading title="변경안 승인" desc="AI가 작성한 수정안을 확인한 후 승인 또는 거절합니다."/><div className="space-y-4">{proposals.map(p=><div className="panel space-y-4 p-5" key={p.id}><div className="flex flex-wrap justify-between gap-3"><strong>{p.summary}</strong><span className="badge">{p.status}</span></div>{p.changes.map((c,i)=><div className="rounded-lg bg-slate-50 p-3" key={i}><strong className="text-sm">{c.operation} · {c.title} · {c.visibility}</strong><p className="text-flow mt-2 max-h-40 overflow-auto text-xs">{c.body}</p></div>)}{p.status==='pending'&&<div className="flex justify-end gap-2"><button className="btn btn-secondary" onClick={()=>void decide(p,'reject')}>거절</button><button className="btn btn-primary" onClick={()=>void decide(p,'approve')}>승인</button></div>}</div>)}{!proposals.length&&<Empty>변경 요청이 없습니다.</Empty>}</div></>}

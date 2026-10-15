@@ -4,3 +4,12 @@
 *{box-sizing:border-box}html,body{min-height:100%}body{background:var(--bg);color:var(--fg);font-family:Arial,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
 button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}textarea,input,select{outline:none}textarea:focus,input:focus,select:focus{border-color:#3a8bbf;box-shadow:0 0 0 3px #b6d9ec55}
 .panel{background:var(--card);border:1px solid var(--border);border-radius:16px}.input{border:1px solid var(--border);background:white;border-radius:10px;padding:10px 12px;width:100%}.btn{border-radius:10px;padding:9px 15px;font-weight:600;font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:background .15s}.btn-primary{background:var(--blue);color:white}.btn-primary:hover{background:#0d527f}.btn-secondary{border:1px solid var(--border);background:white;color:var(--fg)}.btn-secondary:hover{background:#f2f6fa}.nav-tab{padding:10px 13px;border-radius:10px;display:flex;align-items:center;gap:10px;text-align:left;width:100%;color:#526477}.nav-tab:hover,.nav-tab.active{background:#eaf3fa;color:#17679c}.muted{color:var(--muted)}.badge{font-size:11px;border-radius:6px;background:#e8f2f8;color:#17699e;padding:3px 7px}.text-flow{white-space:pre-wrap;overflow-wrap:anywhere}.bubble-ai{background:#fff;border:1px solid var(--border);border-radius:16px;padding:18px}.bubble-user{background:#edf5fc;border-radius:16px;padding:14px 18px}.scroll-hide::-webkit-scrollbar{width:5px}.scroll-hide::-webkit-scrollbar-thumb{background:#cfdae5;border-radius:8px}
+
+/* Inline ChatGPT-style progress feedback; the API must still return a real SSE response. */
+.chat-spinner{display:inline-block;height:14px;width:14px;flex-shrink:0;border:2px solid #93a9b8;border-top-color:#14669e;border-radius:50%;animation:macgpt-spin .8s linear infinite}
+.chat-spinner.chat-spinner-light{border-color:rgba(255,255,255,.6);border-top-color:#fff}
+.chat-cursor{margin-left:2px;color:#14669e;animation:macgpt-blink 1s step-end infinite}
+@keyframes macgpt-spin{to{transform:rotate(360deg)}}
+@keyframes macgpt-blink{50%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.chat-spinner,.chat-spinner.chat-spinner-light{border-color:rgba(255,255,255,.6);border-top-color:#fff}
+.chat-cursor{animation:none}}
