@@ -13,3 +13,12 @@ button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}textarea,in
 @keyframes macgpt-blink{50%{opacity:0}}
 @media(prefers-reduced-motion:reduce){.chat-spinner,.chat-spinner.chat-spinner-light{border-color:rgba(255,255,255,.6);border-top-color:#fff}
 .chat-cursor{animation:none}}
+
+/* Quiet three-dot ChatGPT-like progress indicator, no duplicated footer status. */
+.chat-typing{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:42px;min-height:24px;vertical-align:middle}
+.chat-typing i{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:macgpt-typing 1.15s ease-in-out infinite}
+.chat-typing i:nth-child(2){animation-delay:0.14s}.chat-typing i:nth-child(3){animation-delay:0.28s}
+.chat-typing-light{min-width:26px;gap:3px}.chat-typing-light i{background:#fff;width:4px;height:4px}
+.chat-stream-dot{display:inline-block;font-size:9px;color:#9baab8;animation:macgpt-typing 1.2s ease-in-out infinite}
+@keyframes macgpt-typing{0%,60%,100%{opacity:.34;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@media(prefers-reduced-motion:reduce){.chat-typing i,.chat-stream-dot{animation:none;opacity:.75}}

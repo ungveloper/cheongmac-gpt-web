@@ -9,6 +9,7 @@ export async function POST(req:Request){
   if(!await limit(actor)) return Response.json({error:{code:'RATE_LIMITED',message:'잠시 후 다시 시도해 주세요.'}},{status:429});
   const payload=chatSchema.safeParse(await req.json().catch(()=>null));
   if(!payload.success) return Response.json({error:{code:'BAD_REQUEST',message:'질문 형식을 확인해 주세요.'}},{status:400});
+  if(payload.data.attachments.length) return Response.json({error:{code:'ATTACHMENTS_STREAM_ONLY',message:'파일 첨부는 스트리밍 채팅 API에서만 지원합니다.'}},{status:400});
   try {
     const hits=await searchKnowledge(payload.data.message,actor.scope);
     const text=await answer(payload.data.message,hits,payload.data.history);
