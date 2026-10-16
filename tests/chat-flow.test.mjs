@@ -14,13 +14,14 @@ test('explicit administrator knowledge edits require proposal review',()=>{
   assert.equal(isKnowledgeChangeRequest(prompt),true,prompt);
  }
 });
-test('chat UI exposes progress state, streaming and contextual learning confirmation',()=>{
+test('chat UI exposes progress state, streaming and direct contextual learning',()=>{
  const file=read('components/workspace.tsx');
  assert.match(file,/post\('\/api\/admin\/learning-intent'/);
  assert.match(file,/setPhase\('searching'\)/);
  assert.match(file,/setPhase\('writing'\)/);
  assert.match(file,/role="status"/);
- assert.match(file,/학습하시겠습니까/);
+ assert.doesNotMatch(file,/학습하시겠습니까/);
+ assert.match(file,/analyze=intent.intent==='learn'/);
  assert.doesNotMatch(file,/aria-pressed=\{forceEdit\}/);
  assert.match(file,/finished=true/);
  assert.match(file,/질문 다시 입력/);

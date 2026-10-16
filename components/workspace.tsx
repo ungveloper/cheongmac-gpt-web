@@ -40,7 +40,6 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  const [selectingAtomic,setSelectingAtomic]=useState(false);
  const [excludedChanges,setExcludedChanges]=useState<Record<string,number[]>>({});
  const [uploading,setUploading]=useState(false),[phase,setPhase]=useState<ChatPhase>('idle');
- const [learningOffer,setLearningOffer]=useState<{message:string}|null>(null);
  const [pendingFiles,setPendingFiles]=useState<File[]>([]),[chatFiles,setChatFiles]=useState<ChatFile[]>([]);
  const [dragDepth,setDragDepth]=useState(0);
  const [copiedMessage,setCopiedMessage]=useState<number|null>(null);
@@ -251,42 +250,32 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  function newConversation(destination?:'/'|'/chat'){
   setDragDepth(0);
   const ids=chatFiles.map(f=>f.id);
-  setChat([]);setSuggestion(null);setLearningOffer(null);setPendingFiles([]);setChatFiles([]);setNotice('');setExcludedChanges({});if(destination)router.push(destination);else if(tab!=='chat')router.push('/chat');
+  setChat([]);setSuggestion(null);setPendingFiles([]);setChatFiles([]);setNotice('');setExcludedChanges({});if(destination)router.push(destination);else if(tab!=='chat')router.push('/chat');
   if(ids.length)void post('/api/chat/attachments/delete',{ids}).catch(()=>setNotice('임시 파일의 서버 삭제를 확인하지 못했습니다. 자동 만료 정리를 확인해 주세요.'));
  }
- async function send(confirmed=false){
-  const text=confirmed?(learningOffer?.message||''):(draft.trim()||(pendingFiles.length||chatFiles.length?'첨부파일 내용을 요약해 주세요.':''));
-  if(!text||busy||(confirmed&&!learningOffer))return;
-  const analyze=confirmed;
-  setBusy(true);setPhase(analyze?'analyzing':isAdmin?'analyzing':'searching');setNotice('');setSuggestion(null);
+ async function send(){
+  const text=draft.trim()||(pendingFiles.length||chatFiles.length?'첨부파일 내용을 요약해 주세요.':'');
+  if(!text||busy)return;
+  let analyze=false;
+  setBusy(true);setPhase(isAdmin?'analyzing':'searching');setDraft('');setNotice('');setSuggestion(null);
   const history=chat.filter((m,i)=>!m.failed&&!(m.role==='user'&&chat[i+1]?.failed));
   const selectedNames=[...chatFiles.map(f=>f.name),...pendingFiles.map(f=>f.name)];
-  setLearningOffer(null);
-  if(confirmed){
-   // Replace only the earlier offer, not the original user's message.
-   updateAssistant({content:''});
-  }else{
-   setDraft('');
-   setChat(items=>[...items,{role:'user' as const,content:text,fileNames:selectedNames},{role:'assistant' as const,content:''}]);
-  }
+  setChat(items=>[...items,{role:'user' as const,content:text,fileNames:selectedNames},{role:'assistant' as const,content:''}]);
   // Each message consumes its own attached files. Retain them on failure so retry remains possible.
   let completed=false;
   let usedFileIds:string[]=[];
   try{
-   if(isAdmin&&!confirmed){
-    // OpenAI classifies the message together with recent conversational context.
-    // No proposal API call, file upload or knowledge mutation occurs before confirmation.
+   if(isAdmin){
+    // Classify the current message with conversational context, then continue immediately.
+    // The guarded proposal API still independently checks the real member role.
     const intent=await post('/api/admin/learning-intent',{
      message:text,
      history:history.slice(-8).map(m=>({role:m.role,content:m.content.slice(0,2000)})),
      attachment_names:selectedNames.map(name=>name.slice(0,160)),
     });
-    if(intent.intent==='learn'){
-     setLearningOffer({message:text});
-     updateAssistant({content:'대화 맥락을 확인해 보니 병원 지식을 등록하거나 수정하려는 요청으로 보입니다. **학습하시겠습니까?**\n\n학습 변경안은 확인 후에만 생성하며, 최종 관리자 승인 전에는 공식 지식에 반영되지 않습니다.'});
-     return;
-    }
-    setPhase('searching');
+    if(intent.intent!=='learn'&&intent.intent!=='chat')throw new Error('학습 의도 분석 결과가 올바르지 않습니다. 다시 시도해 주세요.');
+    analyze=intent.intent==='learn';
+    setPhase(analyze?'analyzing':'searching');
    }
    let all=chatFiles;
    if(pendingFiles.length){
@@ -399,10 +388,6 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
       </div>;
     })}
     {suggestion&&<ProposalReview proposal={suggestion} excluded={excludedChanges[suggestion.id]||[]} busy={busy} onExclude={index=>excludeChange(suggestion.id,index)} onRestore={()=>restoreChanges(suggestion.id)} onApprove={()=>void decide(suggestion,'approve')} onReject={()=>void decide(suggestion,'reject')}/>}
-    {learningOffer&&!busy&&<div role="group" aria-label="학습 제안 확인" className="chat-learning-offer flex flex-wrap items-center gap-2 rounded-2xl border border-sky-100 bg-white px-4 py-3 shadow-sm">
-      <button type="button" className="btn btn-primary" onClick={()=>void send(true)}>학습 변경안 만들기</button>
-      <button type="button" className="btn btn-secondary" onClick={()=>{setLearningOffer(null);updateAssistant({content:'학습 요청을 취소했습니다. 기존 대화와 첨부파일은 유지됩니다.'});}}>취소</button>
-    </div>}
     <div ref={endRef}/>
      </div>
      <div className="chat-composer-region">
