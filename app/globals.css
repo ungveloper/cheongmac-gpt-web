@@ -15,6 +15,12 @@ button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}textarea,in
 .chat-cursor{animation:none}}
 
 /* Quiet three-dot ChatGPT-like progress indicator, no duplicated footer status. */
+/* Pending counters and distinct member approval states */
+.pending-nav-count{min-width:22px;min-height:20px;border-radius:999px;background:#e8a545;color:#4e3005;display:inline-flex;align-items:center;justify-content:center;padding:2px 6px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.member-status{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:700;white-space:nowrap}
+.member-status.pending{background:#fff1cf;color:#925a12}
+.member-status.approved{background:#dcfce7;color:#166534}
+.member-status.inactive{background:#fee2e2;color:#991b1b}
 .chat-typing{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:42px;min-height:24px;vertical-align:middle}
 .chat-typing i{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:macgpt-typing 1.15s ease-in-out infinite}
 .chat-typing i:nth-child(2){animation-delay:0.14s}.chat-typing i:nth-child(3){animation-delay:0.28s}

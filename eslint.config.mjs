@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Third-party browser distribution assets are copied from swagger-ui-dist.
+    // They are not authored application source and must not be linted.
+    "public/vendor/swagger/**",
   ]),
 ]);
 

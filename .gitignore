@@ -32,6 +32,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# generated Swagger UI assets (copied from npm package during postinstall)
+/public/vendor/swagger/
+
 # vercel
 .vercel
 
