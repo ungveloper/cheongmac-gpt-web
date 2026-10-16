@@ -28,3 +28,11 @@ button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}textarea,in
 .chat-stream-dot{display:inline-block;font-size:9px;color:#9baab8;animation:macgpt-typing 1.2s ease-in-out infinite}
 @keyframes macgpt-typing{0%,60%,100%{opacity:.34;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
 @media(prefers-reduced-motion:reduce){.chat-typing i,.chat-stream-dot{animation:none;opacity:.75}}
+
+/* Search icon occupies its own flex column: text can never overlap it. */
+.member-search-textbox{min-width:0;border:0;padding:0;background:transparent;box-shadow:none}
+.member-search-textbox:focus{border:0;box-shadow:none;outline:none}
+.member-search-field:focus-within{border-color:#3a8bbf;box-shadow:0 0 0 3px #b6d9ec55}
+/* The textarea is the only resizable portion; avoid a second focus ring inside the composer. */
+.chat-composer-textarea{overflow-y:hidden;box-shadow:none}
+.chat-composer-textarea:focus{border:0;box-shadow:none;outline:none}
