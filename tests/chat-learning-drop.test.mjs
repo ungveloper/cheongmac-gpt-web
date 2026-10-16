@@ -12,14 +12,14 @@ test('explicit document learning is a proposal intent; ordinary questions are no
 });
 test('whole chat area accepts and intercepts file drops',()=>{
   const ui=source('components/workspace.tsx');
-  assert.match(ui,/onDragEnter=\{tab==='chat'\?onChatDragEnter:undefined\}/);
-  assert.match(ui,/onDragOver=\{tab==='chat'\?onChatDragOver:undefined\}/);
-  assert.match(ui,/onDragLeave=\{tab==='chat'\?onChatDragLeave:undefined\}/);
-  assert.match(ui,/onDrop=\{tab==='chat'\?onChatDrop:undefined\}/);
+  assert.match(ui,/ref=\{chatDropRef\}.*onDragEnter=\{onChatDragEnter\}/);
+  assert.match(ui,/ref=\{chatDropRef\}.*onDragOver=\{onChatDragOver\}/);
+  assert.match(ui,/ref=\{chatDropRef\}.*onDragLeave=\{onChatDragLeave\}/);
+  assert.match(ui,/ref=\{chatDropRef\}.*onDrop=\{onChatDrop\}/);
   assert.match(ui,/event\.preventDefault\(\);event\.stopPropagation\(\);setDragDepth\(0\)/);
   assert.match(ui,/selectChatFiles\(event\.dataTransfer\.files\)/);
   assert.match(ui,/role="status" aria-live="polite"/);
-  assert.match(ui,/pointer-events-none fixed inset-0/);
+  assert.match(ui,/pointer-events-none absolute inset-0/);
   assert.match(ui,/onClick=\{\(\)=>fileInput\.current\?\.click\(\)\}/);
 });
 test('learning mode is visible for admins and uploads pending files before proposal call',()=>{

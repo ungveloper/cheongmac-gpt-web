@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const file=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
-test('Drag and drop covers whole workspace and does not remain on max width chat container',()=>{
+test('Drag and drop covers right chat pane but never sidebar or outer workspace',()=>{
  const s=file('components/workspace.tsx');
- assert.match(s,/min-h-screen bg-\[#f6f8fb\].*onDragEnter=\{tab==='chat'\?onChatDragEnter/);
- assert.match(s,/pointer-events-none fixed inset-0 z-\[100\]/);
- assert.doesNotMatch(s,/max-w-4xl.*onDragEnter=\{onChatDragEnter\}/);
+ assert.match(s,/ref=\{chatDropRef\}.*onDragEnter=\{onChatDragEnter\}/);
+ assert.match(s,/pointer-events-none absolute inset-0 z-20/);
+ assert.doesNotMatch(s,/min-h-screen bg-\[#f6f8fb\].*onDragEnter=\{tab==='chat'/);
 });
 test('Loading assistant bubble is content-sized and not full width',()=>{
  const s=file('components/workspace.tsx');
