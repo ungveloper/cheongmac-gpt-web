@@ -42,8 +42,8 @@ test('Composer action buttons preserve accessible alignment with the new round s
  const ui=file('components/workspace.tsx');
  const css=file('app/globals.css');
  assert.match(ui,/flex items-center gap-2[^>]*><input ref=\{fileInput\}/);
- assert.match(ui,/aria-pressed=\{forceEdit\}/);
- assert.match(ui,/<PencilLine size=\{16\}\/>/);
+ assert.doesNotMatch(ui,/aria-pressed=\{forceEdit\}/);
+ assert.doesNotMatch(ui,/<PencilLine size=\{16\}\/>/);
  // The previous regression expected an old rectangular button class; the new
  // layout intentionally adds chat-send-button while retaining type and alignment.
  assert.match(ui,/<button type="submit"[^>]*aria-label="메시지 보내기" className="btn btn-primary chat-send-button self-center"/);

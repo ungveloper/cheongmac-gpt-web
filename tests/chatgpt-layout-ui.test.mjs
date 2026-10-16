@@ -33,7 +33,7 @@ test('Composer retains Enter to send, attachments, autosize, and learning flow',
  assert.match(ui,/className="panel p-2 shadow-sm" data-chat-composer="true"/);
  assert.match(ui,/onClick=\{\(\)=>fileInput\.current\?\.click\(\)\}/);
  assert.match(ui,/e\.key==='Enter'&&!e\.shiftKey/);
- assert.match(ui,/isKnowledgeChangeRequest\(text\)/);
+ assert.match(ui,/post\('\/api\/admin\/learning-intent'/);
  assert.match(ui,/setChatFiles\(\[\]\)/);
  assert.match(ui,/chat-send-button/);
 });

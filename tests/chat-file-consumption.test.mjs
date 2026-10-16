@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const ui=readFileSync(new URL('../components/workspace.tsx',import.meta.url),'utf8');
-const send=ui.slice(ui.indexOf(' async function send(){'),ui.indexOf(' async function decide('));
+const send=ui.slice(ui.indexOf(' async function send(confirmed=false){'),ui.indexOf(' async function decide('));
 
 test('Successful answers consume only the sent attachments and retain historical file names',()=>{
  assert.match(send,/fileNames:selectedNames/);

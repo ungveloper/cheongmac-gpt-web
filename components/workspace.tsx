@@ -5,7 +5,6 @@ import {browserDb} from '@/lib/supabase-browser';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {ProposalReview} from './proposal-review';
-import {isKnowledgeChangeRequest} from '@/lib/knowledge-intent.mjs';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {Member} from '@/lib/auth';
@@ -40,7 +39,8 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  const [atomicPendingIds,setAtomicPendingIds]=useState<string[]>([]),[checkedAtomicIds,setCheckedAtomicIds]=useState<Set<string>>(()=>new Set());
  const [selectingAtomic,setSelectingAtomic]=useState(false);
  const [excludedChanges,setExcludedChanges]=useState<Record<string,number[]>>({});
- const [uploading,setUploading]=useState(false),[phase,setPhase]=useState<ChatPhase>('idle'),[forceEdit,setForceEdit]=useState(false);
+ const [uploading,setUploading]=useState(false),[phase,setPhase]=useState<ChatPhase>('idle');
+ const [learningOffer,setLearningOffer]=useState<{message:string}|null>(null);
  const [pendingFiles,setPendingFiles]=useState<File[]>([]),[chatFiles,setChatFiles]=useState<ChatFile[]>([]);
  const [dragDepth,setDragDepth]=useState(0);
  const [copiedMessage,setCopiedMessage]=useState<number|null>(null);
@@ -251,21 +251,43 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  function newConversation(destination?:'/'|'/chat'){
   setDragDepth(0);
   const ids=chatFiles.map(f=>f.id);
-  setChat([]);setSuggestion(null);setForceEdit(false);setPendingFiles([]);setChatFiles([]);setNotice('');setExcludedChanges({});if(destination)router.push(destination);else if(tab!=='chat')router.push('/chat');
+  setChat([]);setSuggestion(null);setLearningOffer(null);setPendingFiles([]);setChatFiles([]);setNotice('');setExcludedChanges({});if(destination)router.push(destination);else if(tab!=='chat')router.push('/chat');
   if(ids.length)void post('/api/chat/attachments/delete',{ids}).catch(()=>setNotice('임시 파일의 서버 삭제를 확인하지 못했습니다. 자동 만료 정리를 확인해 주세요.'));
  }
- async function send(){
-  const text=draft.trim()||(pendingFiles.length||chatFiles.length?'첨부파일 내용을 요약해 주세요.':'');
-  if(!text||busy)return;
-  const analyze=isAdmin&&(forceEdit||isKnowledgeChangeRequest(text));
-  setBusy(true);setPhase(analyze?'analyzing':'searching');setDraft('');setNotice('');setSuggestion(null);setForceEdit(false);
+ async function send(confirmed=false){
+  const text=confirmed?(learningOffer?.message||''):(draft.trim()||(pendingFiles.length||chatFiles.length?'첨부파일 내용을 요약해 주세요.':''));
+  if(!text||busy||(confirmed&&!learningOffer))return;
+  const analyze=confirmed;
+  setBusy(true);setPhase(analyze?'analyzing':isAdmin?'analyzing':'searching');setNotice('');setSuggestion(null);
   const history=chat.filter((m,i)=>!m.failed&&!(m.role==='user'&&chat[i+1]?.failed));
   const selectedNames=[...chatFiles.map(f=>f.name),...pendingFiles.map(f=>f.name)];
-  setChat(items=>[...items,{role:'user' as const,content:text,fileNames:selectedNames},{role:'assistant' as const,content:''}]);
+  setLearningOffer(null);
+  if(confirmed){
+   // Replace only the earlier offer, not the original user's message.
+   updateAssistant({content:''});
+  }else{
+   setDraft('');
+   setChat(items=>[...items,{role:'user' as const,content:text,fileNames:selectedNames},{role:'assistant' as const,content:''}]);
+  }
   // Each message consumes its own attached files. Retain them on failure so retry remains possible.
   let completed=false;
   let usedFileIds:string[]=[];
   try{
+   if(isAdmin&&!confirmed){
+    // OpenAI classifies the message together with recent conversational context.
+    // No proposal API call, file upload or knowledge mutation occurs before confirmation.
+    const intent=await post('/api/admin/learning-intent',{
+     message:text,
+     history:history.slice(-8).map(m=>({role:m.role,content:m.content.slice(0,2000)})),
+     attachment_names:selectedNames.map(name=>name.slice(0,160)),
+    });
+    if(intent.intent==='learn'){
+     setLearningOffer({message:text});
+     updateAssistant({content:'대화 맥락을 확인해 보니 병원 지식을 등록하거나 수정하려는 요청으로 보입니다. **학습하시겠습니까?**\n\n학습 변경안은 확인 후에만 생성하며, 최종 관리자 승인 전에는 공식 지식에 반영되지 않습니다.'});
+     return;
+    }
+    setPhase('searching');
+   }
    let all=chatFiles;
    if(pendingFiles.length){
     setPhase(analyze?'analyzing':'searching');
@@ -350,7 +372,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
    </nav>
    <div className="mt-auto border-t border-slate-100 pt-5"><div className="flex items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-100 font-bold text-sky-700">{(member.display_name||member.email).slice(0,1).toUpperCase()}</div><div className="min-w-0"><div className="truncate text-sm font-semibold">{member.display_name||member.email}</div><div className="muted text-xs">{member.role==='super_admin'?'최종관리자':member.role==='admin'?'관리자':'일반 직원'}</div></div></div><form action="/logout" method="post" className="mt-4"><button className="nav-tab text-sm"><LogOut size={16}/> 로그아웃</button></form></div>
   </aside>
-  <div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-10 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/90 px-5 backdrop-blur md:px-10"><div className="flex items-center gap-3"><button className="md:hidden" onClick={()=>setMenu(true)} aria-label="메뉴 열기"><Menu size={21}/></button><h2 className="font-semibold">{titles[tab]}</h2><span className="hidden rounded-full bg-sky-50 px-3 py-1 text-xs text-sky-800 sm:inline">승인 지식 기반</span></div><div className="flex items-center gap-2">{isAdmin&&tab==='chat'&&<button type="button" aria-pressed={forceEdit} disabled={busy} onClick={()=>setForceEdit(v=>!v)} className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors sm:text-sm ${forceEdit?'border-sky-600 bg-sky-700 text-white shadow-sm':'border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-50'}`} title={forceEdit?'학습 모드 끄기':'첨부파일과 요청 내용으로 학습 변경안 생성'}><PencilLine size={16}/><span>학습 모드</span><span className={`rounded-md px-1.5 py-0.5 text-[11px] ${forceEdit?'bg-white/20 text-white':'bg-slate-100 text-slate-500'}`}>{forceEdit?'ON':'OFF'}</span></button>}</div></header>
+  <div className="flex min-w-0 flex-1 flex-col"><header className="sticky top-0 z-10 flex h-[72px] items-center justify-between border-b border-slate-200 bg-white/90 px-5 backdrop-blur md:px-10"><div className="flex items-center gap-3"><button className="md:hidden" onClick={()=>setMenu(true)} aria-label="메뉴 열기"><Menu size={21}/></button><h2 className="font-semibold">{titles[tab]}</h2><span className="hidden rounded-full bg-sky-50 px-3 py-1 text-xs text-sky-800 sm:inline">승인 지식 기반</span></div><div className="flex items-center gap-2"></div></header>
    {notice&&<div className="mx-5 mt-5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:mx-10"><span className="text-flow">{notice}</span><button onClick={()=>setNotice('')}><X size={16}/></button></div>}
    {tab==='chat'&&<div ref={chatDropRef} className="chat-workspace relative flex min-h-0 flex-1 flex-col" onDragEnter={onChatDragEnter} onDragOver={onChatDragOver} onDragLeave={onChatDragLeave} onDrop={onChatDrop} onDragEnd={()=>setDragDepth(0)}>
     {dragDepth>0&&<div role="status" aria-live="polite" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-4 border-dashed border-sky-500 bg-sky-50/95"><div className="mx-5 flex max-w-md flex-col items-center gap-3 rounded-3xl bg-white px-10 py-10 text-center text-sky-800 shadow-lg"><UploadCloud size={40}/><strong className="text-xl">파일을 놓아 첨부하세요</strong><span className="text-sm text-slate-500">채팅 영역에 놓아 첨부하세요. 사이드바에는 첨부되지 않습니다. · 파일당 10MB</span></div></div>}
@@ -377,6 +399,10 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
       </div>;
     })}
     {suggestion&&<ProposalReview proposal={suggestion} excluded={excludedChanges[suggestion.id]||[]} busy={busy} onExclude={index=>excludeChange(suggestion.id,index)} onRestore={()=>restoreChanges(suggestion.id)} onApprove={()=>void decide(suggestion,'approve')} onReject={()=>void decide(suggestion,'reject')}/>}
+    {learningOffer&&!busy&&<div role="group" aria-label="학습 제안 확인" className="chat-learning-offer flex flex-wrap items-center gap-2 rounded-2xl border border-sky-100 bg-white px-4 py-3 shadow-sm">
+      <button type="button" className="btn btn-primary" onClick={()=>void send(true)}>학습 변경안 만들기</button>
+      <button type="button" className="btn btn-secondary" onClick={()=>{setLearningOffer(null);updateAssistant({content:'학습 요청을 취소했습니다. 기존 대화와 첨부파일은 유지됩니다.'});}}>취소</button>
+    </div>}
     <div ref={endRef}/>
      </div>
      <div className="chat-composer-region">

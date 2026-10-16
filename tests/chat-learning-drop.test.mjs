@@ -22,9 +22,11 @@ test('whole chat area accepts and intercepts file drops',()=>{
   assert.match(ui,/pointer-events-none absolute inset-0/);
   assert.match(ui,/onClick=\{\(\)=>fileInput\.current\?\.click\(\)\}/);
 });
-test('learning mode is visible for admins and uploads pending files before proposal call',()=>{
+test('AI intent confirmation replaces manual mode while retaining authenticated proposal flow',()=>{
   const ui=source('components/workspace.tsx');
-  assert.match(ui,/<span>학습 모드<\/span>/);
+  assert.doesNotMatch(ui,/<span>학습 모드<\/span>/);
+  assert.match(ui,/학습 변경안 만들기/);
+  assert.match(ui,/학습하시겠습니까/);
   assert.doesNotMatch(ui,/<span>지식 변경 모드<\/span>/);
   assert.match(ui,/const added=await uploadChatFiles\(pendingFiles\)/);
   assert.match(ui,/post\('\/api\/admin\/assist',\{message:text,attachments:attachmentIds\}\)/);
