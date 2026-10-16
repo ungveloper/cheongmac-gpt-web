@@ -6,7 +6,7 @@ import {proposalResult} from '@/lib/validation';
 import {ChatFileError,idsSchema,loadChatFiles,makeFileParts,hasExpectedFileSignature} from '@/lib/chat-attachments';
 import {extractLearningPdfText} from '@/lib/learning-pdf';
 import {splitLearningContext} from '@/lib/learning-chunks.mjs';
-import {reviewSourceSections} from '@/lib/source-review.mjs';
+import {extractAtomicFacts} from '@/lib/atomic-knowledge.mjs';
 import {bucket} from '@/lib/config';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
@@ -24,7 +24,7 @@ export async function POST(req:Request){
  }
  const {message,attachments}=payload.data;
  // A long pasted brandbook is a document, not a 4,000-character chat instruction.
- const isPastedDocument=message.length>4000;
+ const isPastedDocument=message.length>4000||(/(?:학습|지식 등록|공식 지식)/u.test(message)&&message.length>120&&/^\s*(?:\d+(?:-\d+)?\.|[✔✓])/m.test(message));
  const shortRequest=isPastedDocument?'사용자가 붙여넣은 장문 문서의 사실을 분석해 공식 지식 변경안을 제안하세요. 원문에 없는 사실은 생성하지 마세요.':message;
  // The operator must be authorized and must own each non-expired attachment.
  // The service role never accepts a caller-supplied storage path or URL.
@@ -73,20 +73,29 @@ export async function POST(req:Request){
   if(source.length>200000)return Response.json({error:'LEARNING_DOCUMENT_TOO_LONG',message:'현재 한 학습 요청이 처리할 수 있는 텍스트 용량을 초과했습니다. 서버의 처리 용량을 확장해야 합니다. 내용은 일부만 저장되지 않았습니다.'},{status:413});
   if(/\b\d{6}[- ]?[1-4]\d{6}\b/.test(source)||/\b(?:OPENAI_API_KEY|SUPABASE_SERVICE_ROLE_KEY)\s*[:=]/i.test(source))
    return Response.json({error:'SENSITIVE_SOURCE',message:'문서에 민감한 식별정보 또는 서버 인증정보로 보이는 내용이 있어 자동 등록안을 생성하지 않았습니다.'},{status:422});
-  let sections;
-  try{sections=reviewSourceSections(source);}catch(e){
-   console.error('learning source coverage error',e instanceof Error?e.message:'unknown');
-   return Response.json({error:'LEARNING_COVERAGE_FAILED',message:'전체 원문 보존 검사에 실패했습니다. 변경안을 일부만 저장하지 않았습니다.'},{status:422});
+  let atomic;
+  try{atomic=extractAtomicFacts(source);}catch(e){
+   console.error('atomic learning coverage error',e instanceof Error?e.message:'unknown');
+   return Response.json({error:'LEARNING_COVERAGE_FAILED',message:'개별 사실 분리 또는 전체 원문 범위 검증에 실패했습니다. 일부분만 저장하지 않았습니다.'},{status:422});
   }
-  const chars=sections.reduce((sum,section)=>sum+section.body.length,0);
-  if(chars!==source.length)return Response.json({error:'LEARNING_COVERAGE_FAILED',message:'원문 범위 검사가 실패했습니다.'},{status:422});
-  const changes=sections.map(section=>({operation:'create' as const,item_id:null,expected_version:null,title:section.title,visibility:'internal' as const,body:section.body}));
+  // Important: every knowledge item stores ONE claim, not a full chapter/paragraph.
+  const changes=atomic.facts.map(fact=>({operation:'create' as const,item_id:null,expected_version:null,title:fact.title,visibility:'internal' as const,body:fact.body}));
+  const chars=atomic.coveredChars;
   const digest=createHash('sha256').update(source,'utf8').digest('hex');
-  const manifest={source_sha256:digest,source_chars:source.length,covered_chars:chars,section_count:changes.length,coverage_complete:true,source_format:'plain_text_extraction',sources:fileNames.length?fileNames:['붙여넣은 텍스트'],sections:sections.map(section=>({title:section.title,start:section.start,end:section.end}))};
-  const summary=`원문 ${source.length.toLocaleString('ko-KR')}자를 ${changes.length}개 항목으로 분류했습니다. 모든 원문 구간은 한 번씩 포함되었으며 총 ${chars.toLocaleString('ko-KR')}자가 검토 대상으로 보존되었습니다. 의료·인사·진료 정보의 정확성과 최신성, 중복 여부는 관리자가 확인해야 합니다. 승인 전 공식 지식으로 게시되지 않습니다.`;
-  const {data,error}=await adminDb().from('knowledge_proposals').insert({request_text:`문서 전체 검토 요청: ${shortRequest.slice(0,500)} | SHA256 ${digest}`,summary,changes,source_manifest:manifest,requested_by:member.member.id}).select('id,changes,summary,status,source_manifest').single();
-  if(error){console.error('single review save failed',{code:error.code,message:error.message});return Response.json({error:['42703','PGRST204'].includes(error.code)?'MIGRATION_REQUIRED':'PROPOSAL_SAVE_FAILED',message:['42703','PGRST204'].includes(error.code)?'전체 원문 검토용 Supabase SQL 마이그레이션을 실행해 주세요.':'학습 변경안 전체를 저장하지 못했습니다. 일부 항목은 저장되지 않았습니다.'},{status:503});}
-  return Response.json({kind:'proposal',proposal:data,coverage:{complete:true,sourceChars:chars,items:changes.length,digest}},{headers:{'Cache-Control':'no-store'}});
+  // Each fact is its OWN approval request and later its OWN knowledge_items row.
+  // A single SQL RPC inserts all independent requests and the source atomically.
+  const factRows=atomic.facts.map((fact,index)=>({index,change:changes[index],evidence:fact.evidence,context:fact.context,start:fact.start,end:fact.end}));
+  const {data,error}=await adminDb().rpc('create_atomic_learning_proposals',{
+   p_actor:member.member.id,p_source_text:source,p_sha256:digest,
+   p_sources:fileNames.length?fileNames:['붙여넣은 텍스트'],p_facts:factRows,
+  });
+  if(error){
+   console.error('atomic proposal creation failed',{code:error.code,message:error.message});
+   const migrationRequired=error.code==='PGRST202'||/create_atomic_learning_proposals/.test(error.message);
+   return Response.json({error:migrationRequired?'MIGRATION_REQUIRED':'ATOMIC_SAVE_FAILED',message:migrationRequired?'개별 사실 저장용 Supabase SQL 002·003 마이그레이션을 실행해 주세요.':'개별 사실 변경안을 저장하지 못했습니다. 원문 전체 처리 내용을 다시 확인해 주세요.'},{status:503});
+  }
+  if(!data||typeof data.created!=='number'||data.created!==atomic.facts.length)return Response.json({error:'ATOMIC_SAVE_MISMATCH',message:'DB 저장 결과의 건수가 원문 사실 건수와 일치하지 않습니다. 서버 로그를 확인하세요.'},{status:503});
+  return Response.json({kind:'atomic_learning',created:data.created,source_id:data.source_id,coverage:{complete:true,sourceChars:chars,items:atomic.facts.length,digest}},{headers:{'Cache-Control':'no-store'}});
  }
  try {
   let matches;

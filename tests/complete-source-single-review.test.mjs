@@ -1,59 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createHash} from 'node:crypto';
-import {reviewSourceSections} from '../lib/source-review.mjs';
-const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),'utf8');
-const src=['청맥 브랜드북','[목차]','1-1. 병원 개요','1-5. 진료과목','1-6. 의료진 소개','1-7. 시설',...Array.from({length:9},(_,i)=>`기본 자료 항목 ${i+1} `+'안내 '.repeat(30)),'1. 청맥병원 기본 정보','1-1. 병원 개요','설립 목적과 기본 정보 '.repeat(65),'1-5. 진료과목 및 특화진료','✔️ 하지정맥류','하지정맥류 원문 정보 '.repeat(65),'✔️ 당뇨발','당뇨발 원문 정보 '.repeat(65),'1-6. 의료진 소개','박용범 원장님 | 혈관외과 전문의','학회와 진료 경력 '.repeat(65),'전진원 원장님 | 혈관외과 전문의','자격 및 경력 '.repeat(65),'장지란 원장님 | 혈관외과 전문의','경력 정보 '.repeat(65),'변승재 원장님 | 혈관외과 전문의','학술 정보 '.repeat(65),'배병호 원장님 | 영상의학과 전문의','진료 경력 '.repeat(65),'김병주 원장님 | 마취통증의학과 전문의','전공 및 경력 '.repeat(65),'1-7. 주요 장비 및 시설',...Array.from({length:10},(_,i)=>`${i+1}. 장비 ${i+1}\n`+'장비 기능 설명 '.repeat(50)),'1-8. 지원 서비스',...Array.from({length:5},(_,i)=>`${i+1}. 편의 ${i+1}\n`+'편의 사항 '.repeat(25)),'1-9. 협력 네트워크','학술 교류와 운영 '.repeat(20),'---','위 내용을 학습해줘.'].join('\n');
-
-test('Long, structured brandbook preserves every character, no item truncation',()=>{
- const sections=reviewSourceSections(src,{maxBodyChars:11800});
- assert.ok(sections.length>12,sections.length);
- assert.equal(sections.map(s=>s.body).join(''),src);
- assert.equal(sections.reduce((sum,s)=>sum+s.body.length,0),src.length);
- assert.equal(sections[0].start,0);assert.equal(sections.at(-1).end,src.length);
- assert.ok(sections.every(s=>s.body.length<=11800&&s.title.length<=200));
- const titles=sections.map(s=>s.title).join(' ');
- for(const name of ['하지정맥류','당뇨발','박용범','전진원','장지란','변승재','배병호','김병주'])assert.ok(titles.includes(name),name);
- assert.equal(createHash('sha256').update(sections.map(s=>s.body).join('')).digest('hex'),createHash('sha256').update(src).digest('hex'));
+import {extractAtomicFacts} from '../lib/atomic-knowledge.mjs';
+const read=p=>readFileSync(new URL(`../${p}`,import.meta.url),'utf8');
+const source=['청맥 브랜드북','[목차]','1-5. 진료과목 및 특화진료','1-6. 의료진 소개','1. 청맥병원 기본 정보','대한민국 혈관특별시, 청맥병원은 단순히 혈관질환을 치료하는 의료기관이 아닙니다.','2010년 개원 이후 청맥병원은 진료를 넘어 연구, 교육, 학술활동에 기여해 왔습니다.','오늘날 청맥병원은 환자에게는 신뢰받는 병원입니다. 의료진에게는 배우는 병원입니다.','1-5. 진료과목 및 특화진료','✔️ 하지정맥류','하지정맥류는 다리 정맥 속 판막 기능이 저하되는 만성 질환입니다. 환자는 다리 부종을 느낄 수 있습니다.','1-6. 의료진 소개','박용범 원장님 | 혈관외과 전문의','- 부산대학교 의과대학 졸업','- 대한혈관외과학회 상임이사','전진원 원장님 | 혈관외과 전문의','- 부산대학교 의과대학 졸업','- 대한정맥학회 정회원'].join('\n');
+test('Every individual sentence becomes a separately selectable fact, not full chapter',()=>{
+ const r=extractAtomicFacts(source);
+ assert.equal(r.coveredChars,source.length);
+ assert.ok(r.complete);
+ assert.ok(r.facts.length>=9,r.facts.length);
+ assert.ok(r.facts.every(f=>f.body.length<300));
+ const statements=r.facts.map(f=>f.body);
+ assert.ok(statements.some(x=>x.includes('브랜드 표현')));
+ assert.ok(statements.some(x=>x.includes('단순히 혈관질환을 치료하는 의료기관이 아닙니다')));
+ assert.ok(statements.some(x=>x.includes('2010년 개원 이후')));
+ assert.ok(!statements.includes('청맥 브랜드북'));
+ assert.ok(!statements.includes('작성일: 2026년 6월 22일'));
+ const doctors=r.facts.filter(f=>f.body.includes('원장님:'));
+ assert.equal(doctors.length,4,doctors.map(f=>f.body).join('\n'));
+ assert.ok(doctors.some(f=>f.body.startsWith('전진원 원장님')));
 });
-test('Unstructured prose and overlong paragraphs are also fully preserved in bounded body chunks',()=>{
- const raw='가'.repeat(45678)+'\n'+'나'.repeat(345);
- const parts=reviewSourceSections(raw);
- assert.equal(parts.map(p=>p.body).join(''),raw);
- assert.ok(parts.every(p=>p.body.length<=11800));
- assert.ok(parts.length>3);
+test('All offsets, including headings and TOC, cover original text without silent omissions',()=>{
+ const r=extractAtomicFacts(source);
+ assert.equal(r.fragments[0].start,0);
+ assert.equal(r.fragments.at(-1).end,source.length);
+ assert.ok(r.fragments.every((v,i)=>i===0||v.start===r.fragments[i-1].end));
+ assert.ok(r.facts.every(f=>source.slice(f.start,f.end).trim().length>0));
+ assert.ok(r.fragments.some(f=>f.reason==='table_of_contents'));
 });
-test('One source yields one proposal; no 12-item group or slice, and manifests record full coverage',()=>{
+test('No arbitrary item-count limit, including 500 independent rows',()=>{
+ const text=Array.from({length:500},(_,i)=>`제${i+1}항. 병원 정책 번호 ${i+1}에 대한 정확한 기록입니다.`).join('\n');
+ const r=extractAtomicFacts(text);
+ assert.ok(r.facts.length>=500,`got ${r.facts.length}`);
+ assert.equal(r.coveredChars,text.length);
+});
+test('No unbounded single fact gets truncated or silently approved',()=>{
+ assert.throws(()=>extractAtomicFacts('임상경력'.repeat(4000)),/ATOMIC_FACT_TOO_LONG/);
+});
+test('Atomic source path writes one separate proposal per fact via transactional RPC',()=>{
  const api=read('app/api/admin/assist/route.ts');
- assert.match(api,/reviewSourceSections\(source\)/);
- assert.match(api,/source_manifest:manifest/);
- assert.match(api,/coverage_complete:true/);
- assert.match(api,/createHash\('sha256'\)/);
- assert.match(api,/\.insert\(\{request_text:/);
- assert.match(api,/\.select\('id,changes,summary,status,source_manifest'\)\.single\(\)/);
- assert.doesNotMatch(api,/unique\.slice\(0,12\)/);
- assert.doesNotMatch(api,/TOO_MANY_CHANGES/);
-});
-test('Unlimited selection validation requires SQL migration, maintains atomic lock and audit, no stale 12 bound',()=>{
- const route=read('app/api/admin/proposals/approve/route.ts');
- const sql=read('supabase/migrations/202610160002_complete_source_single_proposal.sql');
- assert.match(route,/\.min\(0\)\)\.min\(1\)\.refine/);
- assert.doesNotMatch(route,/\.max\(11\)|\.max\(12\)/);
- assert.match(sql,/for update/);
- assert.match(sql,/s=any\(p_selected\)/);
- assert.match(sql,/approved_change_indices=/);
- assert.match(sql,/excluded_indices/);
- assert.doesNotMatch(sql,/proposal_size>12/);
- assert.match(sql,/revoke execute on function public\.resolve_knowledge_proposal_selected/);
-});
-test('Full review provides searchable entries, selected indices and an audit-friendly coverage banner',()=>{
- const ui=read('components/proposal-review.tsx');
- const workspace=read('components/workspace.tsx');
- assert.match(ui,/변경안 항목 검색/);
- assert.match(ui,/filtered\.map/);
- assert.match(ui,/covered_chars/);
- assert.match(read('app/api/admin/proposals/route.ts'),/approved_change_indices,source_manifest/);
- assert.match(workspace,/selected_indices:includedIndices\(p\)/);
- assert.match(workspace,/MacGPT 홈으로 이동하고 대화 초기화/);
+ assert.match(api,/extractAtomicFacts\(source\)/);
+ assert.match(api,/atomic\.facts\.map/);
+ assert.match(api,/create_atomic_learning_proposals/);
+ assert.match(api,/kind:'atomic_learning'/);
+ assert.doesNotMatch(api,/reviewSourceSections\(source\)/);
+ const sql=read('supabase/migrations/202610160003_atomic_learning_proposals.sql');
+ assert.match(sql,/for v_fact in select value from jsonb_array_elements\(p_facts\)/);
+ assert.match(sql,/insert into public\.knowledge_proposals/);
+ assert.match(sql,/jsonb_build_array\(v_change\)/);
+ assert.match(sql,/source_text text not null/);
+ assert.match(sql,/revoke execute on function public\.create_atomic_learning_proposals/);
+ assert.doesNotMatch(sql,/limit 12|v_index>12/);
+ const route=read('app/api/admin/proposals/route.ts');
+ assert.match(route,/\.range\(offset,offset\+limit-1\)/);
+ assert.match(route,/count:'exact'/);
+ const ui=read('components/workspace.tsx');
+ assert.match(ui,/outcome\.kind==='atomic_learning'/);
+ assert.match(ui,/proposalPage,setProposalPage/);
+ assert.match(ui,/승인 요청 페이지 이동/);
+ const approval=read('app/api/admin/proposals/approve/route.ts');
+ assert.doesNotMatch(approval,/\.max\(11\)|\.max\(12\)/);
 });

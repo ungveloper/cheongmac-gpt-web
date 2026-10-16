@@ -37,7 +37,7 @@ test('A pasted 45k character brandbook stays in source order and is chunked',()=
  assert.match(api,/관리자 요청: \$\{shortRequest\}/);
  assert.match(api,/searchKnowledge\(isPastedDocument\?/);
  assert.match(api,/LEARNING_TEXT_TOO_LONG/);
- assert.match(api,/reviewSourceSections\(source\)/);
+ assert.match(api,/extractAtomicFacts\(source\)/);
  assert.doesNotMatch(api,/TOO_MANY_CHANGES/);
  assert.match(api,/if\(\(!fileNames.length&&!isPastedDocument\)\|\|scopeSpecified/);
  assert.doesNotMatch(api,/\.slice\(0,12\);/);

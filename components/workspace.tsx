@@ -36,6 +36,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  const [waiting,setWaiting]=useState<MemberRow[]>([]),[allTotal,setAllTotal]=useState(0),[waitingTotal,setWaitingTotal]=useState(0),[memberQuery,setMemberQuery]=useState(''),[memberSort,setMemberSort]=useState<MemberSort>('created_desc'),[memberPage,setMemberPage]=useState(1),[waitingPage,setWaitingPage]=useState(1),[memberBusy,setMemberBusy]=useState(false),[reloadMembers,setReloadMembers]=useState(0);
  const [pendingCounts,setPendingCounts]=useState<{members:number;proposals:number}|null>(null);
  const [proposalView,setProposalView]=useState<'pending'|'approved'|'rejected'>('pending');
+ const [proposalPage,setProposalPage]=useState(1),[proposalTotal,setProposalTotal]=useState(0);
  const [excludedChanges,setExcludedChanges]=useState<Record<string,number[]>>({});
  const [uploading,setUploading]=useState(false),[phase,setPhase]=useState<ChatPhase>('idle'),[forceEdit,setForceEdit]=useState(false);
  const [pendingFiles,setPendingFiles]=useState<File[]>([]),[chatFiles,setChatFiles]=useState<ChatFile[]>([]);
@@ -92,7 +93,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  },[tab,isSuper,memberPage,waitingPage,memberSort,memberQuery,reloadMembers]);
  async function refresh(next=tab){try{
   if(next==='knowledge'){const r=await json('/api/v1/knowledge?limit=50');setKnowledge(r.data||[]);}
-  if(next==='proposals'){const r=await json(`/api/admin/proposals?status=${proposalView}`);setProposals(r.data||[]);}
+  if(next==='proposals'){const r=await json(`/api/admin/proposals?status=${proposalView}&page=${proposalPage}`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);}
   if(next==='members')setReloadMembers(v=>v+1);
   if(next==='api'){const r=await json('/api/admin/apps');setApps(r.data||[]);}
   if(next==='files'){const r=await json('/api/admin/files');setFiles(r.data||[]);}
@@ -103,9 +104,10 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
   return()=>window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
  },[tab]);
+ async function loadProposalPage(page:number){setProposalPage(page);try{const r=await json(`/api/admin/proposals?status=${proposalView}&page=${page}`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);}catch(e){setNotice(e instanceof Error?e.message:'변경안 조회 실패');}}
  async function loadProposalView(view:'pending'|'approved'|'rejected'){
-  setProposalView(view);
-  try{const r=await json(`/api/admin/proposals?status=${view}`);setProposals(r.data||[]);}
+  setProposalView(view);setProposalPage(1);
+  try{const r=await json(`/api/admin/proposals?status=${view}&page=1`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);}
   catch(e){setNotice(e instanceof Error?e.message:'변경안 조회 실패');}
  }
  function excludeChange(id:string,index:number){setExcludedChanges(prev=>({...prev,[id]:Array.from(new Set([...(prev[id]||[]),index]))}));}
@@ -247,9 +249,14 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
    usedFileIds=attachmentIds;
    if(analyze){
     const outcome=await post('/api/admin/assist',{message:text,attachments:attachmentIds});
+    if(outcome.kind==='atomic_learning'){
+     setSuggestion(null);void updatePendingCounts();
+     updateAssistant({content:`원문 ${outcome.coverage?.sourceChars?.toLocaleString('ko-KR')||''}자의 사실을 **${outcome.created?.toLocaleString('ko-KR')||0}개의 독립 지식 변경안**으로 생성했습니다.\n\n각 사실은 서로 다른 승인 요청이며 승인 후에도 독립적으로 수정·폐기할 수 있습니다. [승인 대기 페이지에서 한 건씩 검토하기](/proposals)\n\n제목·목차 등 문맥은 출처에 별도로 보존했습니다. 사실과 의료 정보의 정확성은 승인 전 확인해 주세요.`});
+     completed=true;return;
+    }
     if(outcome.kind==='proposal'){
      setSuggestion(outcome.proposal);void updatePendingCounts();
-     updateAssistant({content:outcome.coverage?.complete?`원문 전체 ${outcome.coverage.sourceChars.toLocaleString('ko-KR')}자를 빠짐없이 ${outcome.coverage.items}개 검토 항목으로 나누어 **하나의 변경안**에 보존했습니다. 아래에서 검색·제외 후 선택 승인할 수 있습니다. 원문 내용의 의학적 정확성은 승인 전에 확인해 주세요.`:`${attachmentIds.length?'첨부파일을 분석하여 ':''}학습 변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 내용을 확인한 뒤 승인하면 공식 지식에 반영됩니다. 승인 전에는 학습된 것이 아닙니다.`});
+     updateAssistant({content:outcome.coverage?.complete?`원문 전체 ${outcome.coverage.sourceChars.toLocaleString('ko-KR')}자를 빠짐없이 ${outcome.coverage.items}개 독립 사실로 분리했습니다. 아래에서 각 사실을 검색·제외 후 선택 승인할 수 있습니다. 원문 내용의 의학적 정확성은 승인 전에 확인해 주세요.`:`${attachmentIds.length?'첨부파일을 분석하여 ':''}학습 변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 내용을 확인한 뒤 승인하면 공식 지식에 반영됩니다. 승인 전에는 학습된 것이 아닙니다.`});
      completed=true;
      return;
     }
@@ -354,6 +361,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
       {proposals.filter(p=>p.status===proposalView).map(p=><ProposalReview key={p.id} proposal={p} excluded={excludedChanges[p.id]||[]} busy={busy} readOnly={p.status!=='pending'} onExclude={index=>excludeChange(p.id,index)} onRestore={()=>restoreChanges(p.id)} onApprove={()=>void decide(p,'approve')} onReject={()=>void decide(p,'reject')}/>) }
       {!proposals.some(p=>p.status===proposalView)&&<Empty>{proposalView==='pending'?'승인 대기 변경안이 없습니다.':proposalView==='rejected'?'거절한 변경안이 없습니다.':'승인한 변경안이 없습니다.'}</Empty>}
      </div>
+     {proposalTotal>25&&<nav aria-label="승인 요청 페이지 이동" className="flex items-center justify-center gap-3 pt-3"><button type="button" className="btn btn-secondary" disabled={proposalPage<=1||busy} onClick={()=>void loadProposalPage(proposalPage-1)}><ChevronLeft size={16}/> 이전</button><span className="text-sm text-slate-600">{proposalPage} / {Math.ceil(proposalTotal/25)}페이지 · 총 {proposalTotal}건</span><button type="button" className="btn btn-secondary" disabled={proposalPage>=Math.ceil(proposalTotal/25)||busy} onClick={()=>void loadProposalPage(proposalPage+1)}>다음 <ChevronRight size={16}/></button></nav>}
     </>}
     {tab==='files'&&<><Heading title="첨부파일 보관함" desc="파일은 비공개 Supabase Storage에 직접 업로드됩니다. 공식 지식에 연결해야 다운로드 권한이 부여됩니다."/><label className="panel flex cursor-pointer flex-col items-center gap-3 border-dashed p-9 text-center"><FilePlus className="text-sky-700" size={32}/><strong>{uploading?'업로드 중...':'PDF · DOCX · XLSX · TXT · 이미지 업로드'}</strong><span className="muted text-xs">파일당 최대 50MB · 관리자 전용</span><input className="hidden" type="file" disabled={uploading} accept=".pdf,.docx,.xlsx,.txt,.md,.png,.jpg,.jpeg" onChange={e=>{const f=e.target.files?.[0];if(f)void upload(f);e.target.value='';}}/></label><div className="space-y-3">{files.map(f=><div className="panel flex flex-wrap items-center justify-between gap-4 p-4" key={f.id}><div><div className="font-semibold text-sm">{f.original_name}</div><div className="muted text-xs">{Math.round(f.byte_size/1024)} KB · {f.upload_status}</div></div><div className="flex items-center gap-2">{f.knowledge_id?<span className="badge">지식 연결됨</span>:<button className="btn btn-secondary" onClick={async()=>{const id=window.prompt('연결할 승인 지식의 ID (UUID)를 입력하세요');if(id){try{await post('/api/admin/files',{id:f.id,knowledge_id:id},'PATCH');void refresh('files');}catch(e){setNotice(String(e));}}}}>지식 연결</button>}{f.knowledge_id&&<button className="btn btn-secondary" onClick={async()=>{try{const r=await json(`/api/files/${f.id}`);window.open(r.url,'_blank','noopener,noreferrer');}catch(e){setNotice(String(e));}}}><Download size={14}/></button>}</div></div>)}{!files.length&&<Empty>등록된 파일이 없습니다.</Empty>}</div><p className="muted text-xs">파일은 원본 보관 기능이며 PDF/Word/Excel의 자동 텍스트 추출은 후속 구현 범위입니다. 업로드만으로 AI 지식이 게시되지 않습니다.</p></>}
     {tab==='members'&&<>
