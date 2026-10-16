@@ -36,3 +36,20 @@ button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}textarea,in
 /* The textarea is the only resizable portion; avoid a second focus ring inside the composer. */
 .chat-composer-textarea{overflow-y:hidden;box-shadow:none}
 .chat-composer-textarea:focus{border:0;box-shadow:none;outline:none}
+
+/* Accessible ChatGPT-style rich text without executing HTML embedded in model output. */
+.chat-markdown{overflow-wrap:anywhere}
+.chat-markdown > :first-child{margin-top:0}
+.chat-markdown > :last-child{margin-bottom:0}
+.chat-markdown p{margin:0 0 0.75em}
+.chat-markdown h1,.chat-markdown h2,.chat-markdown h3{font-weight:700;line-height:1.45;margin:1em 0 .4em}
+.chat-markdown h1{font-size:1.35em}.chat-markdown h2{font-size:1.2em}.chat-markdown h3{font-size:1.075em}
+.chat-markdown ul{list-style:disc;margin:.6em 0;padding-left:1.5em}.chat-markdown ol{list-style:decimal;margin:.6em 0;padding-left:1.5em}
+.chat-markdown li{margin:.2em 0}.chat-markdown li p{margin:.2em 0}
+.chat-markdown a{color:#14669e;text-decoration:underline;text-underline-offset:3px}
+.chat-markdown pre{margin:.7em 0;max-width:100%;overflow:auto;border-radius:12px;background:#1d2939;color:#f1f5f9;padding:14px;font-size:12px;line-height:1.65}
+.chat-markdown :not(pre)>code{border-radius:4px;background:#e8eef4;padding:2px 5px;font-size:.9em}
+.chat-markdown blockquote{border-left:3px solid #b0c6d6;padding-left:12px;margin:.8em 0;color:#596b79}
+.chat-markdown table{width:100%;display:block;overflow-x:auto;border-collapse:collapse;margin:.7em 0;font-size:.9em}
+.chat-markdown th,.chat-markdown td{border:1px solid #d7e2ea;padding:6px 9px}.chat-markdown th{background:#eaf3f8}
+.chat-markdown hr{border:0;border-top:1px solid #dde5eb;margin:1.2em 0}

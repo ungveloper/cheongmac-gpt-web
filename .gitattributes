@@ -1,0 +1,2 @@
+# Keep PDF fixtures binary so git diff --check does not interpret PDF bytes as whitespace errors.
+tests/fixtures/*.pdf binary

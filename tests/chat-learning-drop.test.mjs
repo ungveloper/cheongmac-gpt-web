@@ -12,14 +12,14 @@ test('explicit document learning is a proposal intent; ordinary questions are no
 });
 test('whole chat area accepts and intercepts file drops',()=>{
   const ui=source('components/workspace.tsx');
-  assert.match(ui,/onDragEnter=\{onChatDragEnter\}/);
-  assert.match(ui,/onDragOver=\{onChatDragOver\}/);
-  assert.match(ui,/onDragLeave=\{onChatDragLeave\}/);
-  assert.match(ui,/onDrop=\{onChatDrop\}/);
+  assert.match(ui,/onDragEnter=\{tab==='chat'\?onChatDragEnter:undefined\}/);
+  assert.match(ui,/onDragOver=\{tab==='chat'\?onChatDragOver:undefined\}/);
+  assert.match(ui,/onDragLeave=\{tab==='chat'\?onChatDragLeave:undefined\}/);
+  assert.match(ui,/onDrop=\{tab==='chat'\?onChatDrop:undefined\}/);
   assert.match(ui,/event\.preventDefault\(\);event\.stopPropagation\(\);setDragDepth\(0\)/);
   assert.match(ui,/selectChatFiles\(event\.dataTransfer\.files\)/);
   assert.match(ui,/role="status" aria-live="polite"/);
-  assert.match(ui,/pointer-events-none absolute inset-0/);
+  assert.match(ui,/pointer-events-none fixed inset-0/);
   assert.match(ui,/onClick=\{\(\)=>fileInput\.current\?\.click\(\)\}/);
 });
 test('learning mode is visible for admins and uploads pending files before proposal call',()=>{
@@ -36,7 +36,7 @@ test('admin assist checks role, file ownership, format, and approval boundary',(
   assert.match(api,/requireMember\('admin'\)/);
   assert.match(api,/attachments:idsSchema\.default\(\[\]\)/);
   assert.match(api,/loadChatFiles\(attachments,member\.member\.id\)/);
-  assert.match(api,/makeFileParts\(files\)/);
+  assert.match(api,/extractLearningPdfText\(pdfs\)/);
   assert.match(api,/type:'input_text'/);
   assert.match(api,/\.from\('knowledge_proposals'\)\.insert/);
   assert.doesNotMatch(api,/resolve_knowledge_proposal/);
