@@ -4,8 +4,8 @@ import {useState} from 'react';
 
 type Change={operation:'create'|'update'|'archive';item_id:string|null;expected_version:number|null;title:string;visibility:'public'|'internal'|'restricted';body:string};
 type Proposal={id:string;summary:string;changes:Change[];status:string;created_at?:string;approved_change_indices?:number[]|null;source_manifest?:{source_chars:number;covered_chars:number;atomic_fact_count?:number;coverage_complete:boolean;facts?:Array<{evidence:string;context:string;start:number;end:number}>;evidence?:string;context?:string;review_mode?:string}|null};
-type Props={proposal:Proposal;excluded:number[];busy?:boolean;readOnly?:boolean;onExclude?:(index:number)=>void;onRestore?:()=>void;onApprove?:()=>void;onReject?:()=>void};
-export function ProposalReview({proposal,excluded,busy=false,readOnly=false,onExclude,onRestore,onApprove,onReject}:Props){
+type Props={proposal:Proposal;excluded:number[];busy?:boolean;readOnly?:boolean;checked?:boolean;onToggle?:()=>void;onExclude?:(index:number)=>void;onRestore?:()=>void;onApprove?:()=>void;onReject?:()=>void};
+export function ProposalReview({proposal,excluded,busy=false,readOnly=false,checked=false,onToggle,onExclude,onRestore,onApprove,onReject}:Props){
  const [query,setQuery]=useState('');
  const [showAll,setShowAll]=useState(false);
  const pending=proposal.status==='pending'&&!readOnly;
@@ -15,6 +15,11 @@ export function ProposalReview({proposal,excluded,busy=false,readOnly=false,onEx
  const excludedCount=pending?excluded.length:approvedIndices?.length!==undefined?proposal.changes.length-approvedIndices.length:0;
  const filtered=visible.filter(({change})=>!query.trim()||(change.title+' '+change.body).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
  return <section className="panel space-y-4 p-5" aria-label="학습 변경안">
+  {pending&&proposal.source_manifest?.review_mode==='atomic_fact'&&onToggle&&
+   <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-3 text-sm font-semibold text-slate-700">
+    <input type="checkbox" className="h-5 w-5 shrink-0 accent-sky-700" disabled={busy} checked={checked} onChange={onToggle} aria-label={`${proposal.changes[0]?.title||'독립 사실'} 학습 선택`}/>
+    <span>이 사실 학습 선택</span>
+   </label>}
   <div className="flex flex-wrap items-start justify-between gap-3">
    <div className="min-w-0 flex-1"><h3 className="font-semibold leading-7">{proposal.status==='rejected'?'거절한 변경안':proposal.status==='approved'?'승인된 변경안':'승인 대기 변경안'}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{proposal.summary}</p></div>
    <span className={`member-status ${proposal.status==='pending'?'pending':proposal.status==='approved'?'approved':'inactive'}`}>{proposal.status==='pending'?'대기':proposal.status==='approved'?'승인됨':'거절됨'}</span>

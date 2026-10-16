@@ -37,6 +37,8 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  const [pendingCounts,setPendingCounts]=useState<{members:number;proposals:number}|null>(null);
  const [proposalView,setProposalView]=useState<'pending'|'approved'|'rejected'>('pending');
  const [proposalPage,setProposalPage]=useState(1),[proposalTotal,setProposalTotal]=useState(0);
+ const [atomicPendingIds,setAtomicPendingIds]=useState<string[]>([]),[checkedAtomicIds,setCheckedAtomicIds]=useState<Set<string>>(()=>new Set());
+ const [selectingAtomic,setSelectingAtomic]=useState(false);
  const [excludedChanges,setExcludedChanges]=useState<Record<string,number[]>>({});
  const [uploading,setUploading]=useState(false),[phase,setPhase]=useState<ChatPhase>('idle'),[forceEdit,setForceEdit]=useState(false);
  const [pendingFiles,setPendingFiles]=useState<File[]>([]),[chatFiles,setChatFiles]=useState<ChatFile[]>([]);
@@ -93,11 +95,36 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  },[tab,isSuper,memberPage,waitingPage,memberSort,memberQuery,reloadMembers]);
  async function refresh(next=tab){try{
   if(next==='knowledge'){const r=await json('/api/v1/knowledge?limit=50');setKnowledge(r.data||[]);}
-  if(next==='proposals'){const r=await json(`/api/admin/proposals?status=${proposalView}&page=${proposalPage}`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);}
+  if(next==='proposals'){const r=await json(`/api/admin/proposals?status=${proposalView}&page=${proposalPage}`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);if(proposalView==='pending')await refreshAtomicIds();}
   if(next==='members')setReloadMembers(v=>v+1);
   if(next==='api'){const r=await json('/api/admin/apps');setApps(r.data||[]);}
   if(next==='files'){const r=await json('/api/admin/files');setFiles(r.data||[]);}
  }catch(e){setNotice(e instanceof Error?e.message:'목록 조회 실패');}}
+ async function refreshAtomicIds(){
+  try{
+   const result=await json('/api/admin/proposals?status=pending&ids_only=1');
+   const available:string[]=result.ids||[];
+   const allowed=new Set(available);
+   setAtomicPendingIds(available);
+   setCheckedAtomicIds(previous=>new Set([...previous].filter(id=>allowed.has(id))));
+  }catch(e){setNotice(e instanceof Error?e.message:'개별 사실 선택 목록을 확인하지 못했습니다.');}
+ }
+ function toggleAtomic(id:string){setCheckedAtomicIds(previous=>{
+  const next=new Set(previous);if(next.has(id))next.delete(id);else next.add(id);return next;
+ });}
+ async function approveCheckedAtomic(){
+  const ids=[...checkedAtomicIds];
+  if(!ids.length)return;
+  if(!window.confirm(`체크한 개별 사실 ${ids.length.toLocaleString('ko-KR')}건만 공식 지식으로 승인할까요? 체크하지 않은 요청은 승인 대기 상태로 유지됩니다.`))return;
+  setBusy(true);setSelectingAtomic(true);setNotice('');
+  try{
+   const result=await post('/api/admin/proposals/approve-bulk',{ids});
+   setCheckedAtomicIds(new Set());
+   setNotice(`선택한 ${result.approved?.toLocaleString('ko-KR')||ids.length}건을 승인했습니다.${result.warning?' '+result.warning:''}`);
+   await refresh('proposals');await updatePendingCounts();
+  }catch(e){setNotice(e instanceof Error?e.message:'선택한 사실 승인에 실패했습니다. 일괄 트랜잭션이 완료되지 않았습니다.');}
+  finally{setSelectingAtomic(false);setBusy(false);}
+ }
  useEffect(()=>{
   // Load each real route on mount; menu navigation is handled by Next.js links.
   const timer=window.setTimeout(()=>{void refresh(tab);},0);
@@ -107,7 +134,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  async function loadProposalPage(page:number){setProposalPage(page);try{const r=await json(`/api/admin/proposals?status=${proposalView}&page=${page}`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);}catch(e){setNotice(e instanceof Error?e.message:'변경안 조회 실패');}}
  async function loadProposalView(view:'pending'|'approved'|'rejected'){
   setProposalView(view);setProposalPage(1);
-  try{const r=await json(`/api/admin/proposals?status=${view}&page=1`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);}
+  try{const r=await json(`/api/admin/proposals?status=${view}&page=1`);setProposals(r.data||[]);setProposalTotal(r.meta?.total||0);if(view==='pending')await refreshAtomicIds();}
   catch(e){setNotice(e instanceof Error?e.message:'변경안 조회 실패');}
  }
  function excludeChange(id:string,index:number){setExcludedChanges(prev=>({...prev,[id]:Array.from(new Set([...(prev[id]||[]),index]))}));}
@@ -295,6 +322,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
   try{
    const r=await post('/api/admin/proposals/approve',{id:p.id,action,...(action==='approve'?{selected_indices:includedIndices(p)}:{})});
    setSuggestion(null);
+   setCheckedAtomicIds(previous=>{const next=new Set(previous);next.delete(p.id);return next;});
    setExcludedChanges(prev=>({...prev,[p.id]:[]}));
    setNotice(action==='approve'?`선택한 ${r.changes?.length||0}개 항목을 승인했습니다.${r.warning?' · '+r.warning:''}`:'변경안을 거절했습니다. 거절됨 보기에서 다시 확인할 수 있습니다.');
    if(tab==='proposals')await refresh('proposals');
@@ -357,8 +385,20 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="변경안 상태 보기">
       {(['pending','approved','rejected'] as const).map(status=><button key={status} type="button" aria-pressed={proposalView===status} onClick={()=>void loadProposalView(status)} className={`rounded-xl border px-4 py-2 text-sm font-medium ${proposalView===status?'border-sky-600 bg-sky-50 text-sky-800':'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>{status==='pending'?'승인 대기':status==='approved'?'승인됨':'거절됨'}</button>)}
      </div>
+     {proposalView==='pending'&&<section className="panel sticky top-[72px] z-[8] flex flex-wrap items-center justify-between gap-3 border-sky-100 bg-white/95 p-4 shadow-sm backdrop-blur" aria-label="독립 사실 선택 학습">
+      <div className="flex flex-wrap items-center gap-2">
+       <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold">
+        <input type="checkbox" aria-label="대기 중인 전체 독립 사실 선택" className="h-5 w-5 accent-sky-700" disabled={busy||!atomicPendingIds.length} checked={atomicPendingIds.length>0&&checkedAtomicIds.size===atomicPendingIds.length} onChange={e=>setCheckedAtomicIds(e.target.checked?new Set(atomicPendingIds):new Set())}/>
+        전체 선택
+       </label>
+       <button type="button" className="btn btn-secondary" disabled={busy||checkedAtomicIds.size===0} onClick={()=>setCheckedAtomicIds(new Set())}>전체 해제</button>
+       <span role="status" aria-live="polite" className="text-sm font-semibold text-slate-700">전체 {atomicPendingIds.length.toLocaleString('ko-KR')}건 중 <span className="text-sky-700">{checkedAtomicIds.size.toLocaleString('ko-KR')}건 체크</span></span>
+      </div>
+      <button type="button" className="btn btn-primary" disabled={busy||checkedAtomicIds.size===0} onClick={()=>void approveCheckedAtomic()}><Check size={16}/>{selectingAtomic?'선택 승인 처리 중...':`체크한 ${checkedAtomicIds.size.toLocaleString('ko-KR')}건만 학습`}</button>
+      <p className="w-full text-xs text-slate-500">전체 선택은 현재 페이지뿐 아니라 승인 대기 중인 모든 독립 사실에 적용됩니다. 체크하지 않은 사실과 일반 변경안은 그대로 유지됩니다.</p>
+     </section>}
      <div className="space-y-4">
-      {proposals.filter(p=>p.status===proposalView).map(p=><ProposalReview key={p.id} proposal={p} excluded={excludedChanges[p.id]||[]} busy={busy} readOnly={p.status!=='pending'} onExclude={index=>excludeChange(p.id,index)} onRestore={()=>restoreChanges(p.id)} onApprove={()=>void decide(p,'approve')} onReject={()=>void decide(p,'reject')}/>) }
+      {proposals.filter(p=>p.status===proposalView).map(p=><ProposalReview key={p.id} proposal={p} excluded={excludedChanges[p.id]||[]} busy={busy} readOnly={p.status!=='pending'} checked={checkedAtomicIds.has(p.id)} onToggle={()=>toggleAtomic(p.id)} onExclude={index=>excludeChange(p.id,index)} onRestore={()=>restoreChanges(p.id)} onApprove={()=>void decide(p,'approve')} onReject={()=>void decide(p,'reject')}/>) }
       {!proposals.some(p=>p.status===proposalView)&&<Empty>{proposalView==='pending'?'승인 대기 변경안이 없습니다.':proposalView==='rejected'?'거절한 변경안이 없습니다.':'승인한 변경안이 없습니다.'}</Empty>}
      </div>
      {proposalTotal>25&&<nav aria-label="승인 요청 페이지 이동" className="flex items-center justify-center gap-3 pt-3"><button type="button" className="btn btn-secondary" disabled={proposalPage<=1||busy} onClick={()=>void loadProposalPage(proposalPage-1)}><ChevronLeft size={16}/> 이전</button><span className="text-sm text-slate-600">{proposalPage} / {Math.ceil(proposalTotal/25)}페이지 · 총 {proposalTotal}건</span><button type="button" className="btn btn-secondary" disabled={proposalPage>=Math.ceil(proposalTotal/25)||busy} onClick={()=>void loadProposalPage(proposalPage+1)}>다음 <ChevronRight size={16}/></button></nav>}
