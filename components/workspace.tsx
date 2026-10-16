@@ -219,10 +219,10 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
   try{await post('/api/chat/attachments/delete',{ids:[id]});}
   catch{setNotice('서버의 임시 첨부파일 삭제를 확인하지 못했습니다. 만료 파일 정리를 확인해 주세요.');}
  }
- function newConversation(){
+ function newConversation(destination?:'/'|'/chat'){
   setDragDepth(0);
   const ids=chatFiles.map(f=>f.id);
-  setChat([]);setSuggestion(null);setForceEdit(false);setPendingFiles([]);setChatFiles([]);setNotice('');if(tab!=='chat')router.push('/chat');
+  setChat([]);setSuggestion(null);setForceEdit(false);setPendingFiles([]);setChatFiles([]);setNotice('');setExcludedChanges({});if(destination)router.push(destination);else if(tab!=='chat')router.push('/chat');
   if(ids.length)void post('/api/chat/attachments/delete',{ids}).catch(()=>setNotice('임시 파일의 서버 삭제를 확인하지 못했습니다. 자동 만료 정리를 확인해 주세요.'));
  }
  async function send(){
@@ -249,7 +249,7 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
     const outcome=await post('/api/admin/assist',{message:text,attachments:attachmentIds});
     if(outcome.kind==='proposal'){
      setSuggestion(outcome.proposal);void updatePendingCounts();
-     updateAssistant({content:`${attachmentIds.length?'첨부파일을 분석하여 ':''}학습 변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 내용을 확인한 뒤 승인하면 공식 지식에 반영됩니다. 승인 전에는 학습된 것이 아닙니다.`});
+     updateAssistant({content:outcome.coverage?.complete?`원문 전체 ${outcome.coverage.sourceChars.toLocaleString('ko-KR')}자를 빠짐없이 ${outcome.coverage.items}개 검토 항목으로 나누어 **하나의 변경안**에 보존했습니다. 아래에서 검색·제외 후 선택 승인할 수 있습니다. 원문 내용의 의학적 정확성은 승인 전에 확인해 주세요.`:`${attachmentIds.length?'첨부파일을 분석하여 ':''}학습 변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 내용을 확인한 뒤 승인하면 공식 지식에 반영됩니다. 승인 전에는 학습된 것이 아닙니다.`});
      completed=true;
      return;
     }
@@ -303,8 +303,8 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
  return <div className="flex min-h-screen bg-[#f6f8fb]" onDragOverCapture={tab==='chat'?onOutsideChatDragOver:undefined} onDropCapture={tab==='chat'?onOutsideChatDrop:undefined}>
   {menu&&<button aria-label="메뉴 닫기" onClick={()=>setMenu(false)} className="fixed inset-0 z-20 bg-slate-900/30 md:hidden"/>}
   <aside className={`fixed inset-y-0 left-0 z-30 flex w-[260px] flex-col border-r border-slate-200 bg-white p-5 shadow-sm transition-transform md:sticky md:top-0 md:h-screen md:translate-x-0 ${menu?'translate-x-0':'-translate-x-full'}`}>
-   <div className="mb-10 flex items-center justify-between"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-sky-700 text-white"><Sparkles size={21} strokeWidth={1.8}/></div><div><div className="font-bold tracking-tight">MacGPT</div><div className="muted text-[11px]">청맥병원 AI Workspace</div></div></div><button onClick={()=>setMenu(false)} className="md:hidden"><X size={18}/></button></div>
-   <button className="btn btn-primary mb-5 w-full" disabled={busy} onClick={newConversation}><Plus size={15}/> 새 대화</button>
+   <div className="mb-10 flex items-center justify-between"><button type="button" title="대화를 초기화하고 메인페이지로 이동" aria-label="MacGPT 홈으로 이동하고 대화 초기화" disabled={busy} onClick={()=>newConversation('/')} className="flex items-center gap-3 rounded-xl text-left hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"><div className="grid h-10 w-10 place-items-center rounded-xl bg-sky-700 text-white"><Sparkles size={21} strokeWidth={1.8}/></div><div><div className="font-bold tracking-tight">MacGPT</div><div className="muted text-[11px]">청맥병원 AI Workspace</div></div></button><button onClick={()=>setMenu(false)} className="md:hidden"><X size={18}/></button></div>
+   <button className="btn btn-primary mb-5 w-full" disabled={busy} onClick={()=>newConversation()}><Plus size={15}/> 새 대화</button>
    <p className="muted mb-2 px-3 text-[11px] font-semibold uppercase tracking-widest">Workspace</p>
    <nav aria-label="주 메뉴" className="space-y-1">{navigation.map(n=>{const Icon=n.icon;return <Link key={n.id} href={n.id==='api'?'/api-management':`/${n.id}`} onClick={()=>setMenu(false)} aria-current={tab===n.id?'page':undefined} className={`nav-tab text-sm ${tab===n.id?'active font-semibold':''}`}><Icon size={17}/><span className="flex-1">{titles[n.id]}</span></Link>;})}
     {isAdmin&&pendingCounts!==null&&outstandingRequests>0&&<section aria-label="승인 요청" className="mt-5 border-t border-slate-100 pt-4">

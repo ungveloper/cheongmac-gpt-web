@@ -3,9 +3,12 @@ import {adminDb} from '@/lib/supabase';
 import {ai,models} from '@/lib/ai';
 import {searchKnowledge} from '@/lib/search';
 import {proposalResult} from '@/lib/validation';
-import {ChatFileError,idsSchema,loadChatFiles,makeFileParts} from '@/lib/chat-attachments';
+import {ChatFileError,idsSchema,loadChatFiles,makeFileParts,hasExpectedFileSignature} from '@/lib/chat-attachments';
 import {extractLearningPdfText} from '@/lib/learning-pdf';
 import {splitLearningContext} from '@/lib/learning-chunks.mjs';
+import {reviewSourceSections} from '@/lib/source-review.mjs';
+import {bucket} from '@/lib/config';
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 export const runtime='nodejs';
 export const maxDuration=120;
@@ -29,11 +32,22 @@ export async function POST(req:Request){
  let fileNames:string[]=[];
  let pdfContext='';
  let pdfPages=0;
+ const textSources:string[]=[];
  try{
   if(attachments.length){
    const files=await loadChatFiles(attachments,member.member.id);
    const pdfs=files.filter(file=>file.content_type==='application/pdf');
-   const otherFiles=files.filter(file=>file.content_type!=='application/pdf');
+   const otherFiles=files.filter(file=>!['application/pdf','text/plain','text/markdown'].includes(file.content_type));
+   const plainFiles=files.filter(file=>['text/plain','text/markdown'].includes(file.content_type));
+   for(const file of plainFiles){
+    const {data,error}=await adminDb().storage.from(bucket).download(file.storage_path);
+    if(error||!data)throw new ChatFileError('ATTACHMENT_MISSING','첨부 텍스트 파일을 읽지 못했습니다.',410);
+    const bytes=Buffer.from(await data.arrayBuffer());
+    if(bytes.length!==file.byte_size||!hasExpectedFileSignature(bytes,file.content_type))throw new ChatFileError('ATTACHMENT_INVALID','첨부 텍스트 내용의 형식·크기가 올바르지 않습니다.',409);
+    let content:string;
+    try{content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{throw new ChatFileError('TEXT_ENCODING_INVALID','UTF-8 형식의 TXT·MD 파일만 지원합니다.',422);}
+    textSources.push(`[첨부 원문 파일: ${file.original_name}]\n${content}\n[파일 끝]`);
+   }
    // Text-based PDFs take the stable text-extraction path, avoiding Responses API input_file errors.
    // Files have already been checked against the authenticated employee's ownership and expiry.
    if(pdfs.length){
@@ -48,6 +62,31 @@ export async function POST(req:Request){
   if(e instanceof ChatFileError)return Response.json({error:e.code,message:e.message},{status:e.status});
   console.error('admin assist file preparation failure',e);
   return Response.json({error:'FILE_PREPARATION_FAILED',message:'첨부파일을 읽지 못했습니다. 형식과 서버 로그를 확인해 주세요.'},{status:503});
+ }
+ // A source document must be reviewed in full, not summarized into a fixed number of AI items.
+ // Only extracted PDF/TXT/MD or a long pasted message enters this source-preserving path.
+ const sourceParts=[pdfContext,...textSources,...(isPastedDocument?[message]:[])].filter(Boolean);
+ if(sourceParts.length){
+  // Unsupported accompanying files must not be marked as completely analyzed.
+  if(parts.length)return Response.json({error:'SOURCE_COMPLETENESS_UNAVAILABLE',message:'PDF·TXT·MD 이외 파일이 함께 있어 원문 전체 반영을 보장할 수 없습니다. 지원 문서만 별도로 학습해 주세요.'},{status:422});
+  const source=sourceParts.join('\n');
+  if(source.length>200000)return Response.json({error:'LEARNING_DOCUMENT_TOO_LONG',message:'현재 한 학습 요청이 처리할 수 있는 텍스트 용량을 초과했습니다. 서버의 처리 용량을 확장해야 합니다. 내용은 일부만 저장되지 않았습니다.'},{status:413});
+  if(/\b\d{6}[- ]?[1-4]\d{6}\b/.test(source)||/\b(?:OPENAI_API_KEY|SUPABASE_SERVICE_ROLE_KEY)\s*[:=]/i.test(source))
+   return Response.json({error:'SENSITIVE_SOURCE',message:'문서에 민감한 식별정보 또는 서버 인증정보로 보이는 내용이 있어 자동 등록안을 생성하지 않았습니다.'},{status:422});
+  let sections;
+  try{sections=reviewSourceSections(source);}catch(e){
+   console.error('learning source coverage error',e instanceof Error?e.message:'unknown');
+   return Response.json({error:'LEARNING_COVERAGE_FAILED',message:'전체 원문 보존 검사에 실패했습니다. 변경안을 일부만 저장하지 않았습니다.'},{status:422});
+  }
+  const chars=sections.reduce((sum,section)=>sum+section.body.length,0);
+  if(chars!==source.length)return Response.json({error:'LEARNING_COVERAGE_FAILED',message:'원문 범위 검사가 실패했습니다.'},{status:422});
+  const changes=sections.map(section=>({operation:'create' as const,item_id:null,expected_version:null,title:section.title,visibility:'internal' as const,body:section.body}));
+  const digest=createHash('sha256').update(source,'utf8').digest('hex');
+  const manifest={source_sha256:digest,source_chars:source.length,covered_chars:chars,section_count:changes.length,coverage_complete:true,source_format:'plain_text_extraction',sources:fileNames.length?fileNames:['붙여넣은 텍스트'],sections:sections.map(section=>({title:section.title,start:section.start,end:section.end}))};
+  const summary=`원문 ${source.length.toLocaleString('ko-KR')}자를 ${changes.length}개 항목으로 분류했습니다. 모든 원문 구간은 한 번씩 포함되었으며 총 ${chars.toLocaleString('ko-KR')}자가 검토 대상으로 보존되었습니다. 의료·인사·진료 정보의 정확성과 최신성, 중복 여부는 관리자가 확인해야 합니다. 승인 전 공식 지식으로 게시되지 않습니다.`;
+  const {data,error}=await adminDb().from('knowledge_proposals').insert({request_text:`문서 전체 검토 요청: ${shortRequest.slice(0,500)} | SHA256 ${digest}`,summary,changes,source_manifest:manifest,requested_by:member.member.id}).select('id,changes,summary,status,source_manifest').single();
+  if(error){console.error('single review save failed',{code:error.code,message:error.message});return Response.json({error:['42703','PGRST204'].includes(error.code)?'MIGRATION_REQUIRED':'PROPOSAL_SAVE_FAILED',message:['42703','PGRST204'].includes(error.code)?'전체 원문 검토용 Supabase SQL 마이그레이션을 실행해 주세요.':'학습 변경안 전체를 저장하지 못했습니다. 일부 항목은 저장되지 않았습니다.'},{status:503});}
+  return Response.json({kind:'proposal',proposal:data,coverage:{complete:true,sourceChars:chars,items:changes.length,digest}},{headers:{'Cache-Control':'no-store'}});
  }
  try {
   let matches;
@@ -72,7 +111,7 @@ export async function POST(req:Request){
    if(!segments.length)segments=[''];
    if(segments.length>12)throw new Error('LEARNING_DOCUMENT_TOO_LONG');
   }catch{return Response.json({error:'LEARNING_DOCUMENT_TOO_LONG',message:'한 번에 분석할 수 있는 문서 분량을 초과했습니다. 학습할 장이나 주제를 나눠 다시 요청해 주세요.'},{status:413});}
-  const maxPerSegment=Math.max(1,Math.floor(12/segments.length));
+  const maxPerSegment=Math.max(1,Math.floor(24/segments.length));
   const instructions=`당신은 청맥병원 지식 관리자의 요청을 분석합니다. 출력은 오직 유효한 JSON 객체입니다. 최상위 필드 kind("question" 또는 "proposal"),summary(string),changes(array). 모든 변경안 필드는 operation("create","update","archive"),item_id(uuid 또는 null),expected_version(integer 또는 null),title(string),visibility("public","internal","restricted"),body(string)입니다. 모든 키를 포함하세요. 등록·수정·학습 요청이면 proposal, 일반 질문이면 question 및 changes=[]입니다. create의 item_id/expected_version은 null입니다. update/archive는 제공된 승인 지식 ID·버전만 사용하고 archive는 원본을 유지합니다. 기존 지식과 중복 등록하지 마세요. 이 응답은 최대 ${maxPerSegment}개의 변경안을 포함하며 각 본문은 ${(pdfContext||isPastedDocument)?3000:12000}자 이내여야 합니다. 여러 문서 구간에 걸친 항목은 중복하지 말고, 자료에서 확인한 사실만 정리하세요. 없는 내용은 추측하지 말고 summary에 확인 사항을 적으세요. ${fileInstructions}`;
   const analyses:Array<z.infer<typeof proposalResult>>=[];
   // At most two model requests in parallel; no segment is silently omitted.
@@ -112,7 +151,6 @@ export async function POST(req:Request){
    if(seenTitles.has(key))return false;
    seenTitles.add(key);return true;
   });
-  if(unique.length>12)return Response.json({error:'TOO_MANY_CHANGES',message:'학습 변경안이 12건을 초과했습니다. 주제별로 나눠 다시 요청해 주세요.'},{status:422});
   const summary=analyses.map((result,index)=>segments.length>1?`[${index+1}/${segments.length}] ${result.summary}`:result.summary).join('\n').slice(0,1500);
   if(unique.length===0)return Response.json({kind:'question',summary});
   const scopeSpecified=!isPastedDocument&&/(공개\s*지식|공개\s*범위|방문자\s*공개|제한\s*지식|접근\s*범위|원내\s*지식|원내\s*공개)/.test(message);

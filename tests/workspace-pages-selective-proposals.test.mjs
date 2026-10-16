@@ -46,7 +46,7 @@ test('X excludes item only from approval selection; changes remain auditable',()
  assert.match(review,/학습 제외/);
  assert.match(review,/제외한 .*건 되돌리기/);
  assert.match(ui,/selected_indices:includedIndices\(p\)/);
- assert.match(approve,/\.min\(1\)\.max\(12\)\.refine/);
+ assert.match(approve,/selected_indices:z\.array\(z\.number\(\)\.int\(\)\.min\(0\)\)\.min\(1\)\.refine/);
  assert.match(approve,/resolve_knowledge_proposal_selected/);
  assert.match(approve,/MIGRATION_REQUIRED/);
  assert.match(sql,/for update/);

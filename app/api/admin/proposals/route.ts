@@ -7,10 +7,12 @@ export async function GET(req:Request){
  const input=z.enum(['pending','approved','rejected']).safeParse(new URL(req.url).searchParams.get('status')||'pending');
  if(!input.success)return Response.json({error:'INVALID_STATUS'},{status:400});
  const db=adminDb();
- const result=await db.from('knowledge_proposals').select('id,summary,changes,status,created_at,requested_by,approved_change_indices').eq('status',input.data).order('created_at',{ascending:false}).limit(100);
+ const result=await db.from('knowledge_proposals').select('id,summary,changes,status,created_at,requested_by,approved_change_indices,source_manifest').eq('status',input.data).order('created_at',{ascending:false}).limit(100);
  if(!result.error)return Response.json({data:result.data});
  // Read-only fallback before SQL migration: never fall back for approval mutations.
- if(result.error.code==='42703'||/approved_change_indices/.test(result.error.message||'')){
+ if(result.error.code==='42703'||/approved_change_indices|source_manifest/.test(result.error.message||'')){
+  const previous=await db.from('knowledge_proposals').select('id,summary,changes,status,created_at,requested_by,approved_change_indices').eq('status',input.data).order('created_at',{ascending:false}).limit(100);
+  if(!previous.error)return Response.json({data:previous.data?.map(p=>({...p,source_manifest:null})),migration_required:true});
   const legacy=await db.from('knowledge_proposals').select('id,summary,changes,status,created_at,requested_by').eq('status',input.data).order('created_at',{ascending:false}).limit(100);
   if(!legacy.error)return Response.json({data:legacy.data?.map(p=>({...p,approved_change_indices:null})),migration_required:true});
  }
