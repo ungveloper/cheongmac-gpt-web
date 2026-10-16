@@ -233,6 +233,9 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
   const history=chat.filter((m,i)=>!m.failed&&!(m.role==='user'&&chat[i+1]?.failed));
   const selectedNames=[...chatFiles.map(f=>f.name),...pendingFiles.map(f=>f.name)];
   setChat(items=>[...items,{role:'user' as const,content:text,fileNames:selectedNames},{role:'assistant' as const,content:''}]);
+  // Each message consumes its own attached files. Retain them on failure so retry remains possible.
+  let completed=false;
+  let usedFileIds:string[]=[];
   try{
    let all=chatFiles;
    if(pendingFiles.length){
@@ -241,11 +244,13 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
     all=[...chatFiles,...added];setChatFiles(all);setPendingFiles([]);
    }
    const attachmentIds=all.map(file=>file.id);
+   usedFileIds=attachmentIds;
    if(analyze){
     const outcome=await post('/api/admin/assist',{message:text,attachments:attachmentIds});
     if(outcome.kind==='proposal'){
      setSuggestion(outcome.proposal);void updatePendingCounts();
      updateAssistant({content:`${attachmentIds.length?'첨부파일을 분석하여 ':''}학습 변경안을 제안했습니다. ${outcome.proposal.summary}\n아래 내용을 확인한 뒤 승인하면 공식 지식에 반영됩니다. 승인 전에는 학습된 것이 아닙니다.`});
+     completed=true;
      return;
     }
     if(attachmentIds.length){
@@ -254,11 +259,28 @@ export function Workspace({member,initialTab}:{member:Member;initialTab:'chat'|'
     }
    }
    await stream(text,history,attachmentIds);
+   completed=true;
   }catch(e){
    const detail=e instanceof Error?e.message:'요청 처리 중 오류가 발생했습니다.';
    updateAssistant({content:`요청을 완료하지 못했습니다. ${detail}`,failed:true});
    setNotice(detail);
-  }finally{setBusy(false);setPhase('idle');}
+  }finally{
+   if(completed){
+    // The sent message keeps fileNames in chat history; the next message starts with no attachments.
+    setPendingFiles([]);
+    setChatFiles([]);
+    // Server-side temporary objects are no longer needed after AI processing completes.
+    // If deletion fails, leave the successful answer intact; expiry cleanup is the fallback.
+    if(usedFileIds.length){
+     try{await post('/api/chat/attachments/delete',{ids:usedFileIds});}
+     catch(e){
+      console.warn('temporary chat attachment cleanup failed',e);
+      setNotice('답변은 완료됐지만 임시 첨부파일의 서버 삭제를 확인하지 못했습니다. 자동 만료 정리를 확인해 주세요.');
+     }
+    }
+   }
+   setBusy(false);setPhase('idle');
+  }
  }
  async function decide(p:Proposal,action:'approve'|'reject'){
   if(action==='approve'&&includedIndices(p).length===0){setNotice('학습할 항목을 하나 이상 선택하세요.');return;}
