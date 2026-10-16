@@ -53,3 +53,7 @@ button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}textarea,in
 .chat-markdown table{width:100%;display:block;overflow-x:auto;border-collapse:collapse;margin:.7em 0;font-size:.9em}
 .chat-markdown th,.chat-markdown td{border:1px solid #d7e2ea;padding:6px 9px}.chat-markdown th{background:#eaf3f8}
 .chat-markdown hr{border:0;border-top:1px solid #dde5eb;margin:1.2em 0}
+
+/* Native select arrows need their own reserved space on Safari/Chrome/macOS. */
+.member-role-select{appearance:none;-webkit-appearance:none;min-width:132px;max-width:170px;width:auto;line-height:1.4}
+.member-role-select:focus{border-color:#3a8bbf;box-shadow:0 0 0 3px #b6d9ec55}
