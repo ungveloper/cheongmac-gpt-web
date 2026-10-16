@@ -24,7 +24,7 @@ test('Chat composer uses one-line auto-resizing textarea bounded at six lines',(
  assert.match(ui,/naturalHeight>160\?'auto':'hidden'/);
  assert.ok(ui.includes('<textarea ref={composerRef} className="chat-composer-textarea'));
  assert.ok(ui.includes('rows={1} value={draft}'));
- assert.match(ui,/className="panel p-2 shadow-sm"/);
+ assert.match(ui,/className="panel p-2 shadow-sm" data-chat-composer="true"/);
  assert.doesNotMatch(ui,/max-h-40 min-h-12 flex-1 resize-none/);
  const css=file('app/globals.css');
  assert.match(css,/\.chat-composer-textarea:focus\{border:0;box-shadow:none/);

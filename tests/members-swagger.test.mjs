@@ -38,12 +38,16 @@ test('App branding and management icons use lucide-react',()=>{
  assert.doesNotMatch(ui,/>✳<\/div>/);
 });
 
-test('Composer action buttons align vertically; edit mode moves into administrator header',()=>{
+test('Composer action buttons preserve accessible alignment with the new round send button',()=>{
  const ui=file('components/workspace.tsx');
+ const css=file('app/globals.css');
  assert.match(ui,/flex items-center gap-2[^>]*><input ref=\{fileInput\}/);
  assert.match(ui,/aria-pressed=\{forceEdit\}/);
  assert.match(ui,/<PencilLine size=\{16\}\/>/);
- assert.match(ui,/className="btn btn-primary self-center"/);
+ // The previous regression expected an old rectangular button class; the new
+ // layout intentionally adds chat-send-button while retaining type and alignment.
+ assert.match(ui,/<button type="submit"[^>]*aria-label="메시지 보내기" className="btn btn-primary chat-send-button self-center"/);
+ assert.match(css,/\[data-chat-composer\] \.chat-send-button\{[^}]*border-radius:50%/);
  assert.doesNotMatch(ui,/전체 지식 접근/);
  assert.doesNotMatch(ui,/의학적 판단은 의료진과 확인하세요/);
  assert.doesNotMatch(ui,/지식 변경 모드 \(필요 시 선택\)/);
